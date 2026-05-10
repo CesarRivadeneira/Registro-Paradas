@@ -4,6 +4,12 @@ import os
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///mantenimiento.db")
-APP_PORT = int(os.getenv("APP_PORT", "8501"))
-APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-key-change-me")
+
+# Streamlit Cloud override via st.secrets
+try:
+    import streamlit as st
+    secrets_url = st.secrets.get("DATABASE_URL")
+    if secrets_url:
+        DATABASE_URL = secrets_url
+except Exception:
+    pass

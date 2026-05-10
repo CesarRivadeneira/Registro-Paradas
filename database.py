@@ -22,30 +22,41 @@ def init_db():
 def _migrar_base():
     """Agrega columnas nuevas si no existen (migración progresiva)."""
     with get_db() as db:
-        conn = db.connection().connection
-        cursor = conn.cursor()
-        for col, definition in [
-            ("user_id", "INTEGER REFERENCES usuarios(id)"),
-            ("linea_id", "INTEGER REFERENCES lineas(id)"),
-            ("hora_inicio", "VARCHAR DEFAULT ''"),
-            ("duracion_minutos", "INTEGER DEFAULT 0"),
-        ]:
+        dialect = db.bind.dialect.name
+        columnas = [
+            ("eventos", "user_id", "INTEGER REFERENCES usuarios(id)"),
+            ("eventos", "hora_inicio", "VARCHAR DEFAULT ''"),
+            ("eventos", "duracion_minutos", "INTEGER DEFAULT 0"),
+            ("equipos", "linea_id", "INTEGER REFERENCES lineas(id)"),
+        ]
+
+        for table, col, definition in columnas:
             try:
-                cursor.execute(
-                    f"ALTER TABLE eventos ADD COLUMN {col} {definition}"
-                )
+                if dialect == "sqlite":
+                    conn = db.connection().connection
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {col} {definition}"
+                    )
+                elif dialect == "postgresql":
+                    db.execute(
+                        text(
+                            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {definition}"
+                        )
+                    )
+                    db.commit()
             except Exception:
                 pass
-        try:
-            cursor.execute("ALTER TABLE equipos ADD COLUMN linea_id INTEGER REFERENCES lineas(id)")
-            _migrar_equipos_sector_a_linea(cursor, db)
-        except Exception:
-            pass
+
+        if dialect == "sqlite":
+            _migrar_equipos_sector_a_linea(db)
 
 
-def _migrar_equipos_sector_a_linea(cursor, db):
+def _migrar_equipos_sector_a_linea(db):
     """Migra equipos viejos que usaban sector_id al nuevo esquema con linea_id."""
     try:
+        conn = db.connection().connection
+        cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM equipos WHERE linea_id IS NULL AND sector_id IS NOT NULL")
         if cursor.fetchone()[0] == 0:
             return
