@@ -161,74 +161,19 @@ st.sidebar.markdown(
 st.sidebar.markdown(f"**Rol:** {rol}")
 st.sidebar.markdown("---")
 
-if st.sidebar.button("Cerrar sesión"):
-    st.session_state.user = None
-    st.rerun()
-
 # =====================================
-# MENÚ SEGÚN ROL (sidebar con botones)
+# PAGE FUNCTIONS
 # =====================================
 
-if "page" not in st.session_state:
-    st.session_state.page = "Inicio"
-
-st.sidebar.title("Menú")
-
-if st.sidebar.button("Inicio", use_container_width=True):
-    st.session_state.page = "Inicio"
-    st.rerun()
-
-st.sidebar.markdown("---")
-
-if rol in ("admin", "tecnico", "operario"):
-    if st.sidebar.button("Registrar Parada", use_container_width=True):
-        st.session_state.page = "Paradas"
-        st.rerun()
-
-if rol in ("admin", "tecnico"):
-    st.sidebar.markdown("**Consulta**")
-    if st.sidebar.button("Sectores", use_container_width=True):
-        st.session_state.page = "Sectores"
-        st.rerun()
-    if st.sidebar.button("Líneas", use_container_width=True):
-        st.session_state.page = "Líneas"
-        st.rerun()
-    if st.sidebar.button("Equipos", use_container_width=True):
-        st.session_state.page = "Equipos"
-        st.rerun()
-
-if rol == "admin":
-    if st.sidebar.button("Repuestos", use_container_width=True):
-        st.session_state.page = "Repuestos"
-        st.rerun()
-
-if rol in ("admin", "tecnico", "operario", "produccion"):
-    if st.sidebar.button("Historial", use_container_width=True):
-        st.session_state.page = "Historial"
-        st.rerun()
-
-if rol == "admin":
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("**Admin**")
-    if st.sidebar.button("Usuarios", use_container_width=True):
-        st.session_state.page = "Usuarios"
-        st.rerun()
-
-st.title("Sistema de Gestión de Mantenimiento")
-page = st.session_state.page
-
-# =====================================
-# INICIO / LANDING PAGE
-# =====================================
-
-if page == "Inicio":
+def page_inicio():
+    st.title("Sistema de Gestión de Mantenimiento")
     st.header("Panel de Control")
 
     col_b1, col_b2, col_b3, col_b4 = st.columns([2, 1, 1, 1])
     with col_b1:
         if st.button("➕ Registrar Parada", use_container_width=True, type="primary"):
-            st.session_state.page = "Paradas"
-            st.rerun()
+            if _pg_paradas:
+                st.switch_page(_pg_paradas)
     with col_b2:
         st.metric("Total Paradas", len(obtener_eventos()))
     with col_b3:
@@ -238,7 +183,6 @@ if page == "Inicio":
 
     st.markdown("---")
 
-    # Filtros
     st.subheader("Filtrar datos")
     todos_eventos = obtener_eventos()
     todos_equipos = obtener_equipos()
@@ -270,7 +214,6 @@ if page == "Inicio":
             key="filtro_equipo"
         )
 
-    # Filtrar eventos en memoria
     df_base = pd.DataFrame(
         [
             {
@@ -292,7 +235,6 @@ if page == "Inicio":
 
     st.markdown("---")
 
-    # Gráficos verticales
     col_g1, col_g2, col_g3 = st.columns(3)
 
     with col_g1:
@@ -332,7 +274,6 @@ if page == "Inicio":
         else:
             st.info("Sin datos")
 
-    # Tabla detallada
     st.markdown("---")
     st.subheader("Detalle de paradas")
 
@@ -365,11 +306,8 @@ if page == "Inicio":
     else:
         st.info("No hay paradas con los filtros seleccionados")
 
-# =====================================
-# SECTORES (admin)
-# =====================================
 
-elif page == "Sectores":
+def page_sectores():
     st.header("Sectores")
 
     if rol == "admin":
@@ -401,11 +339,8 @@ elif page == "Sectores":
                 st.success(f"Sector '{sector_a_borrar.nombre}' y sus líneas eliminados")
                 st.rerun()
 
-# =====================================
-# LÍNEAS (admin)
-# =====================================
 
-elif page == "Líneas":
+def page_lineas():
     st.header("Líneas de Producción")
 
     if rol == "admin":
@@ -445,11 +380,8 @@ elif page == "Líneas":
                 st.success(f"Línea '{linea_a_borrar.nombre}' y sus equipos eliminados")
                 st.rerun()
 
-# =====================================
-# EQUIPOS (admin / tecnico)
-# =====================================
 
-elif page == "Equipos":
+def page_equipos():
     st.header("Equipos / Robots")
 
     if rol == "admin":
@@ -504,11 +436,8 @@ elif page == "Equipos":
                 st.success(f"Equipo '{equipo_a_borrar.nombre}' eliminado")
                 st.rerun()
 
-# =====================================
-# REPUESTOS (admin / tecnico)
-# =====================================
 
-elif page == "Repuestos":
+def page_repuestos():
     st.header("Gestión de Repuestos")
 
     nombre = st.text_input("Nombre repuesto")
@@ -533,11 +462,8 @@ elif page == "Repuestos":
 
     st.dataframe(df, width="stretch")
 
-# =====================================
-# PARADAS (todos excepto produccion)
-# =====================================
 
-elif page == "Paradas":
+def page_paradas():
     st.header("Registrar Parada de Línea / Equipo")
 
     sectores = obtener_sectores()
@@ -623,11 +549,8 @@ elif page == "Paradas":
             )
             st.success("Parada registrada correctamente")
 
-# =====================================
-# HISTORIAL (todos)
-# =====================================
 
-elif page == "Historial":
+def page_historial():
     st.header("Historial de Paradas")
 
     eventos = obtener_eventos()
@@ -688,11 +611,8 @@ elif page == "Historial":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-# =====================================
-# USUARIOS (solo admin)
-# =====================================
 
-elif page == "Usuarios":
+def page_usuarios():
     st.header("Gestión de Usuarios")
 
     with st.expander("Registrar nuevo usuario", expanded=True):
@@ -740,3 +660,37 @@ elif page == "Usuarios":
                     st.rerun()
     else:
         st.info("No hay usuarios registrados")
+
+# =====================================
+# NAVEGACIÓN
+# =====================================
+
+_pg_paradas = None
+
+pages = [st.Page(page_inicio, title="Inicio", icon="🏠", default=True)]
+
+if rol in ("admin", "tecnico", "operario"):
+    _pg_paradas = st.Page(page_paradas, title="Registrar Parada", icon="➕")
+    pages.append(_pg_paradas)
+
+if rol in ("admin", "tecnico"):
+    pages.append(st.Page(page_sectores, title="Sectores", icon="🏭"))
+    pages.append(st.Page(page_lineas, title="Líneas", icon="📦"))
+    pages.append(st.Page(page_equipos, title="Equipos", icon="🤖"))
+
+if rol == "admin":
+    pages.append(st.Page(page_repuestos, title="Repuestos", icon="🔩"))
+
+if rol in ("admin", "tecnico", "operario", "produccion"):
+    pages.append(st.Page(page_historial, title="Historial", icon="📋"))
+
+if rol == "admin":
+    pages.append(st.Page(page_usuarios, title="Usuarios", icon="👥"))
+
+nav = st.navigation(pages, position="sidebar")
+nav.run()
+
+# Logout al pie del sidebar
+if st.sidebar.button("Cerrar sesión", use_container_width=True):
+    st.session_state.user = None
+    st.rerun()
