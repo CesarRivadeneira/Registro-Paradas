@@ -62,7 +62,12 @@ st.set_page_config(page_title="Gestión de Mantenimiento", layout="wide")
 # INICIALIZAR DB
 # =====================================
 
-init_db()
+try:
+    init_db()
+except Exception as e:
+    st.error(f"Error de conexión a la base de datos: {e}")
+    st.info("Verificá que el secret DATABASE_URL esté configurado correctamente en Streamlit Cloud.")
+    st.stop()
 
 # =====================================
 # CARGA INICIAL (solo si vacío)

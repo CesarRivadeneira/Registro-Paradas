@@ -1,22 +1,40 @@
 import hashlib
 import os
 import base64
+import time
 from contextlib import contextmanager
 from datetime import datetime
 
 from sqlalchemy import create_engine, text, func
 from sqlalchemy.orm import sessionmaker, joinedload
+from sqlalchemy.exc import OperationalError
 
 from config import DATABASE_URL
 from models import Base, Sector, Linea, Equipo, Repuesto, Usuario, EventoMantenimiento
 
-engine = create_engine(DATABASE_URL, echo=False)
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,
+    pool_pre_ping=True,
+    connect_args={"connect_timeout": 10},
+)
 SessionLocal = sessionmaker(bind=engine)
 
 
 def init_db():
-    Base.metadata.create_all(bind=engine)
-    _migrar_base()
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            Base.metadata.create_all(bind=engine)
+            _migrar_base()
+            return
+        except OperationalError as e:
+            if attempt < max_attempts:
+                time.sleep(2 * attempt)
+            else:
+                raise RuntimeError(
+                    f"No se pudo conectar a la base de datos tras {max_attempts} intentos: {e}"
+                ) from e
 
 
 def _migrar_base():
