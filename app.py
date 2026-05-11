@@ -4,37 +4,41 @@ import altair as alt
 from io import BytesIO
 from datetime import datetime, date
 
-from database import (
-    init_db,
-    crear_sector,
-    obtener_sectores,
-    eliminar_sector,
-    crear_linea,
-    obtener_lineas,
-    obtener_lineas_por_sector,
-    eliminar_linea,
-    crear_equipo,
-    obtener_equipos,
-    obtener_equipos_por_linea,
-    eliminar_equipo,
-    crear_repuesto,
-    obtener_repuestos,
-    crear_evento,
-    obtener_eventos,
-    obtener_eventos_recientes,
-    contar_eventos_mes,
-    contar_eventos_por_equipo,
-    contar_eventos_por_sector,
-    repuestos_bajo_stock,
-    sumar_duracion_total,
-    sumar_duracion_mes,
-    obtener_resumen_dashboard,
-    crear_usuario,
-    autenticar,
-    hay_usuarios,
-    obtener_usuarios,
-    desactivar_usuario,
-)
+try:
+    from database import (
+        init_db,
+        crear_sector,
+        obtener_sectores,
+        eliminar_sector,
+        crear_linea,
+        obtener_lineas,
+        obtener_lineas_por_sector,
+        eliminar_linea,
+        crear_equipo,
+        obtener_equipos,
+        obtener_equipos_por_linea,
+        eliminar_equipo,
+        crear_repuesto,
+        obtener_repuestos,
+        crear_evento,
+        obtener_eventos,
+        obtener_eventos_recientes,
+        contar_eventos_mes,
+        contar_eventos_por_equipo,
+        contar_eventos_por_sector,
+        repuestos_bajo_stock,
+        sumar_duracion_total,
+        sumar_duracion_mes,
+        obtener_resumen_dashboard,
+        crear_usuario,
+        autenticar,
+        hay_usuarios,
+        obtener_usuarios,
+        desactivar_usuario,
+    )
+except Exception as e:
+    st.error(f"Error importando database.py: {type(e).__name__}: {e}")
+    st.stop()
 
 DURACION_OPTS = {
     "5 min": 5, "10 min": 10, "15 min": 15, "20 min": 20,
