@@ -156,7 +156,7 @@ user = st.session_state.user
 rol = user.rol
 
 st.sidebar.markdown(
-    f"**Usuario:** {user.nombre_completo or user.username}"
+    f"🔧 **Bienvenido, {user.nombre_completo or user.username}**"
 )
 st.sidebar.markdown(f"**Rol:** {rol}")
 st.sidebar.markdown("---")
