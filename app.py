@@ -28,6 +28,10 @@ from database import (
     repuestos_bajo_stock,
     sumar_duracion_total,
     sumar_duracion_mes,
+    calcular_mttr_global,
+    calcular_mtbf_global,
+    calcular_kpi_por_linea,
+    calcular_evolucion_mensual,
     crear_usuario,
     autenticar,
     hay_usuarios,
@@ -61,7 +65,8 @@ st.set_page_config(page_title="Gestión de Mantenimiento", layout="wide")
 st.markdown(
     """
 <style>
-header[data-testid="stHeader"] { display: none; }
+[data-testid="stToolbar"] { display: none; }
+[data-testid="stDecoration"] { display: none; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -557,25 +562,104 @@ def page_usuarios():
 
 @st.fragment
 def dashboard_section():
+    from datetime import timedelta
     from database import get_db, Sector, Linea, Equipo, EventoMantenimiento
-    st.subheader("Filtrar datos")
-    with get_db() as db:
-        rows = (
-            db.query(
-                Sector.nombre.label("sector"),
-                Linea.nombre.label("linea"),
-                Equipo.nombre.label("equipo"),
-                EventoMantenimiento.duracion_minutos,
-            )
-            .select_from(EventoMantenimiento)
-            .join(Equipo, EventoMantenimiento.equipo_id == Equipo.id)
-            .join(Linea, Equipo.linea_id == Linea.id)
-            .join(Sector, Linea.sector_id == Sector.id)
-            .all()
-        )
-    df_base = pd.DataFrame(rows, columns=["sector", "linea", "equipo", "duracion_minutos"])
-    todos_sectores = obtener_sectores()
 
+    # Selectores
+    col_p1, col_p2, col_p3, col_p4 = st.columns([1, 1, 1, 1])
+    with col_p1:
+        periodo = st.selectbox("Período", ["Este mes", "Últimos 30 días", "Últimos 7 días"], key="kpi_periodo")
+    with col_p2:
+        modo = st.selectbox("Modo operativo", ["24/7", "24/5"], key="kpi_modo")
+    with col_p4:
+        pass
+
+    hoy = date.today()
+    if periodo == "Últimos 7 días":
+        desde = hoy - timedelta(days=7)
+    elif periodo == "Últimos 30 días":
+        desde = hoy - timedelta(days=30)
+    else:
+        desde = hoy.replace(day=1)
+    hasta = hoy
+
+    # Métricas MTTR / MTBF
+    mttr = calcular_mttr_global(desde, hasta)
+    mtbf = calcular_mtbf_global(desde, hasta, modo)
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+    with col_m1:
+        st.metric("MTTR", f"{mttr:.1f} h" if mttr else "—")
+    with col_m2:
+        st.metric("MTBF", f"{mtbf:.1f} h" if mtbf else "—")
+    with col_m3:
+        st.metric("Total Paradas", contar_eventos_mes())
+    with col_m4:
+        st.metric("Downtime total", fmt_duracion(sumar_duracion_total()))
+
+    st.markdown("---")
+
+    # KPIs por línea
+    df_kpi = calcular_kpi_por_linea(desde, hasta, modo)
+    if not df_kpi.empty:
+        col_k1, col_k2 = st.columns(2)
+
+        with col_k1:
+            st.subheader("🔴 Peor MTTR por Línea")
+            top_mttr = df_kpi.nlargest(10, "mttr_h")
+            chart = alt.Chart(top_mttr).mark_bar(color="#E45756").encode(
+                y=alt.Y("linea:N", sort="-x", title=None),
+                x=alt.X("mttr_h:Q", title="Horas"),
+                tooltip=["linea", "mttr_h", "fallas"],
+            ).properties(height=250)
+            st.altair_chart(chart, use_container_width=True)
+
+        with col_k2:
+            st.subheader("🔴 Peor MTBF por Línea")
+            top_mtbf = df_kpi.nsmallest(10, "mtbf_h")
+            chart = alt.Chart(top_mtbf).mark_bar(color="#4C78A8").encode(
+                y=alt.Y("linea:N", sort="-x", title=None),
+                x=alt.X("mtbf_h:Q", title="Horas"),
+                tooltip=["linea", "mtbf_h", "fallas"],
+            ).properties(height=250)
+            st.altair_chart(chart, use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("KPIs por Línea (todas)")
+        st.dataframe(
+            df_kpi.rename(columns={
+                "sector": "Sector", "linea": "Línea", "fallas": "Fallas",
+                "downtime_min": "Downtime (min)", "mttr_h": "MTTR (h)", "mtbf_h": "MTBF (h)"
+            }),
+            width="stretch",
+        )
+        st.markdown("---")
+
+    # Evolución mensual
+    st.subheader("📈 Evolución MTTR / MTBF (12 meses)")
+    df_evol = calcular_evolucion_mensual(modo)
+    if not df_evol.empty:
+        df_evol["mes_label"] = pd.to_datetime(df_evol["mes"]).dt.strftime("%b %y")
+        chart = alt.Chart(df_evol).transform_fold(
+            ["mttr_h", "mtbf_h"],
+            as_=["Métrica", "Horas"],
+        ).mark_line(point=True).encode(
+            x=alt.X("mes_label:N", title=None, sort=None),
+            y=alt.Y("Horas:Q", title="Horas"),
+            color=alt.Color("Métrica:N", scale=alt.Scale(
+                domain=["mttr_h", "mtbf_h"],
+                range=["#E45756", "#4C78A8"],
+            )),
+            tooltip=["mes_label", "Horas"],
+        ).properties(height=300)
+        st.altair_chart(chart, use_container_width=True)
+    else:
+        st.info("Sin datos históricos suficientes")
+
+    st.markdown("---")
+
+    # Filtros por Sector / Línea / Equipo
+    st.subheader("Filtrar datos")
+    todos_sectores = obtener_sectores()
     col_f1, col_f2, col_f3 = st.columns(3)
     with col_f1:
         sec_filtro = st.selectbox(
@@ -602,52 +686,62 @@ def dashboard_section():
             key="filtro_equipo"
         )
 
-    df = df_base.copy()
+    # Cargar datos para gráficos y tabla
+    with get_db() as db:
+        base_rows = (
+            db.query(
+                Sector.nombre.label("sector"),
+                Linea.nombre.label("linea"),
+                Equipo.nombre.label("equipo"),
+                EventoMantenimiento.duracion_minutos,
+            )
+            .select_from(EventoMantenimiento)
+            .join(Equipo, EventoMantenimiento.equipo_id == Equipo.id)
+            .join(Linea, Equipo.linea_id == Linea.id)
+            .join(Sector, Linea.sector_id == Sector.id)
+            .all()
+        )
+    df_base = pd.DataFrame(base_rows, columns=["sector", "linea", "equipo", "duracion_minutos"])
+    df_f = df_base.copy()
     if sec_filtro:
-        df = df[df["sector"] == sec_filtro.nombre]
+        df_f = df_f[df_f["sector"] == sec_filtro.nombre]
     if lin_filtro:
-        df = df[df["linea"] == lin_filtro.nombre]
+        df_f = df_f[df_f["linea"] == lin_filtro.nombre]
     if eq_filtro:
-        df = df[df["equipo"] == eq_filtro.nombre]
-
-    st.markdown("---")
+        df_f = df_f[df_f["equipo"] == eq_filtro.nombre]
 
     col_g1, col_g2, col_g3 = st.columns(3)
-
     with col_g1:
         st.subheader("Por Sector")
-        if not df.empty:
-            grp = df.groupby("sector").agg(Cantidad=("equipo", "count"), Downtime=("duracion_minutos", "sum")).reset_index()
-            chart = alt.Chart(grp).mark_bar(color="#4C78A8").encode(
+        if not df_f.empty:
+            grp = df_f.groupby("sector").agg(Cantidad=("equipo", "count"), Downtime=("duracion_minutos", "sum")).reset_index()
+            st.altair_chart(alt.Chart(grp).mark_bar(color="#4C78A8").encode(
                 x=alt.X("sector:N", axis=alt.Axis(labelAngle=-45)),
                 y=alt.Y("Cantidad:Q"),
-            ).properties(height=250)
-            st.altair_chart(chart, use_container_width=True)
+            ).properties(height=250), use_container_width=True)
         else:
             st.info("Sin datos")
 
     with col_g2:
         st.subheader("Por Línea")
-        if not df.empty:
-            grp = df.groupby("linea").agg(Cantidad=("equipo", "count"), Downtime=("duracion_minutos", "sum")).reset_index()
-            chart = alt.Chart(grp).mark_bar(color="#E45756").encode(
+        if not df_f.empty:
+            grp = df_f.groupby("linea").agg(Cantidad=("equipo", "count"), Downtime=("duracion_minutos", "sum")).reset_index()
+            st.altair_chart(alt.Chart(grp).mark_bar(color="#E45756").encode(
                 x=alt.X("linea:N", axis=alt.Axis(labelAngle=-45)),
                 y=alt.Y("Cantidad:Q"),
-            ).properties(height=250)
-            st.altair_chart(chart, use_container_width=True)
+            ).properties(height=250), use_container_width=True)
         else:
             st.info("Sin datos")
 
     with col_g3:
         st.subheader("Por Equipo")
-        if not df.empty:
-            grp = df.groupby("equipo").agg(Cantidad=("equipo", "count"), Downtime=("duracion_minutos", "sum")).reset_index()
+        if not df_f.empty:
+            grp = df_f.groupby("equipo").agg(Cantidad=("equipo", "count"), Downtime=("duracion_minutos", "sum")).reset_index()
             top = grp.sort_values("Cantidad", ascending=False).head(10)
-            chart = alt.Chart(top).mark_bar(color="#72B7B2").encode(
+            st.altair_chart(alt.Chart(top).mark_bar(color="#72B7B2").encode(
                 x=alt.X("equipo:N", axis=alt.Axis(labelAngle=-45)),
                 y=alt.Y("Cantidad:Q"),
-            ).properties(height=250)
-            st.altair_chart(chart, use_container_width=True)
+            ).properties(height=250), use_container_width=True)
         else:
             st.info("Sin datos")
 

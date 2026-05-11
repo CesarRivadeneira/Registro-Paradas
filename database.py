@@ -509,3 +509,138 @@ def sumar_duracion_mes():
         return db.query(func.coalesce(func.sum(EventoMantenimiento.duracion_minutos), 0)).filter(
             EventoMantenimiento.fecha >= inicio_mes
         ).scalar()
+
+
+# =====================================
+# MTTR / MTBF
+# =====================================
+
+
+def _dias_en_periodo(desde, hasta, modo):
+    """Retorna cantidad de días operativos en el período."""
+    if modo == "24/7":
+        return (hasta - desde).days
+    dias = 0
+    delta = hasta - desde
+    for i in range(delta.days):
+        dia = desde + __import__("datetime").timedelta(days=i)
+        if dia.weekday() < 5:
+            dias += 1
+    return max(dias, 1)
+
+
+@st.cache_data(ttl=60)
+def calcular_mttr_global(desde, hasta):
+    """MTTR global en horas para el período."""
+    with get_db() as db:
+        row = db.query(
+            func.coalesce(func.sum(EventoMantenimiento.duracion_minutos), 0),
+            func.count(EventoMantenimiento.id),
+        ).filter(
+            EventoMantenimiento.fecha >= desde,
+            EventoMantenimiento.fecha <= hasta,
+        ).first()
+        total_min, count = row
+    if count == 0:
+        return 0.0
+    return round(total_min / count / 60, 2)
+
+
+@st.cache_data(ttl=60)
+def calcular_mtbf_global(desde, hasta, modo):
+    """MTBF global en horas para el período."""
+    with get_db() as db:
+        row = db.query(
+            func.coalesce(func.sum(EventoMantenimiento.duracion_minutos), 0),
+            func.count(EventoMantenimiento.id),
+        ).filter(
+            EventoMantenimiento.fecha >= desde,
+            EventoMantenimiento.fecha <= hasta,
+        ).first()
+        total_min, count = row
+    if count == 0:
+        return 0.0
+    op_horas = _dias_en_periodo(desde, hasta, modo) * 24
+    downtime_horas = total_min / 60
+    return round((op_horas - downtime_horas) / count, 2)
+
+
+@st.cache_data(ttl=60)
+def calcular_kpi_por_linea(desde, hasta, modo):
+    """DataFrame con fallas, downtime, MTTR y MTBF por línea."""
+    import pandas as pd
+
+    with get_db() as db:
+        rows = (
+            db.query(
+                Sector.nombre.label("sector"),
+                Linea.nombre.label("linea"),
+                func.count(EventoMantenimiento.id).label("fallas"),
+                func.coalesce(func.sum(EventoMantenimiento.duracion_minutos), 0).label("downtime_min"),
+            )
+            .select_from(EventoMantenimiento)
+            .join(Equipo, EventoMantenimiento.equipo_id == Equipo.id)
+            .join(Linea, Equipo.linea_id == Linea.id)
+            .join(Sector, Linea.sector_id == Sector.id)
+            .filter(
+                EventoMantenimiento.fecha >= desde,
+                EventoMantenimiento.fecha <= hasta,
+            )
+            .group_by(Sector.id, Linea.id)
+            .all()
+        )
+
+    df = pd.DataFrame(rows, columns=["sector", "linea", "fallas", "downtime_min"])
+    if df.empty:
+        return df
+    op_horas = _dias_en_periodo(desde, hasta, modo) * 24
+    df["mttr_h"] = (df["downtime_min"] / df["fallas"] / 60).round(2)
+    df["mtbf_h"] = ((op_horas - df["downtime_min"] / 60) / df["fallas"]).round(2)
+    return df.sort_values("fallas", ascending=False).reset_index(drop=True)
+
+
+@st.cache_data(ttl=300)
+def calcular_evolucion_mensual(modo, meses=12):
+    """DataFrame con MTTR y MTBF mes a mes."""
+    import pandas as pd
+
+    hoy = datetime.now()
+    mes_inicio = hoy.month - (meses - 1)
+    año_inicio = hoy.year
+    while mes_inicio < 1:
+        mes_inicio += 12
+        año_inicio -= 1
+    desde = hoy.replace(year=año_inicio, month=mes_inicio, day=1)
+
+    with get_db() as db:
+        dialect = db.bind.dialect.name
+        if dialect == "postgresql":
+            month_expr = func.DATE_TRUNC("month", EventoMantenimiento.fecha).label("mes")
+        else:
+            month_expr = func.strftime("%Y-%m-01", EventoMantenimiento.fecha).label("mes")
+
+        rows = (
+            db.query(
+                month_expr,
+                func.count(EventoMantenimiento.id).label("fallas"),
+                func.coalesce(func.sum(EventoMantenimiento.duracion_minutos), 0).label("downtime_min"),
+            )
+            .filter(EventoMantenimiento.fecha >= desde)
+            .group_by("mes")
+            .order_by("mes")
+            .all()
+        )
+
+    data = []
+    for r in rows:
+        mes, fallas, downtime = r
+        if fallas == 0:
+            continue
+        mttr = round(downtime / fallas / 60, 2)
+        # Estimar MTBF asumiendo 30 días por mes
+        dias_op = 30 if modo == "24/7" else 22
+        op_horas = dias_op * 24
+        mtbf = round((op_horas - downtime / 60) / fallas, 2)
+        data.append({"mes": mes, "mttr_h": mttr, "mtbf_h": mtbf})
+
+    return pd.DataFrame(data).sort_values("mes")
