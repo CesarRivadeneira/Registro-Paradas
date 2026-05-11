@@ -639,18 +639,16 @@ def dashboard_section():
     df_evol = calcular_evolucion_mensual(modo)
     if not df_evol.empty:
         df_evol["mes_label"] = pd.to_datetime(df_evol["mes"]).dt.strftime("%b %y")
-        chart = alt.Chart(df_evol).transform_fold(
-            ["mttr_h", "mtbf_h"],
-            as_=["Métrica", "Horas"],
-        ).mark_line(point=True).encode(
-            x=alt.X("mes_label:N", title=None, sort=alt.EncodingSortField("mes_label", order="ascending")),
-            y=alt.Y("Horas:Q", title="Horas"),
-            color=alt.Color("Métrica:N", scale=alt.Scale(
-                domain=["mttr_h", "mtbf_h"],
-                range=["#E45756", "#4C78A8"],
-            )),
-            tooltip=["mes_label", "Horas"],
-        ).properties(height=300)
+        base = alt.Chart(df_evol).encode(x=alt.X("mes_label:N", title=None, sort=None))
+        line_mttr = base.mark_line(point=True, color="#E45756").encode(
+            y=alt.Y("mttr_h:Q", title="Horas"),
+            tooltip=["mes_label", "mttr_h"],
+        )
+        line_mtbf = base.mark_line(point=True, color="#4C78A8").encode(
+            y=alt.Y("mtbf_h:Q", title=""),
+            tooltip=["mes_label", "mtbf_h"],
+        )
+        chart = alt.layer(line_mttr, line_mtbf).resolve_scale(y="shared").properties(height=300)
         st.altair_chart(chart, use_container_width=True)
     else:
         st.info("Sin datos históricos suficientes")
