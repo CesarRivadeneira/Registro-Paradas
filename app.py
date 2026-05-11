@@ -607,7 +607,7 @@ def dashboard_section():
             st.subheader("🔴 Peor MTTR por Línea")
             top_mttr = df_kpi.nlargest(10, "mttr_h")
             chart = alt.Chart(top_mttr).mark_bar(color="#E45756").encode(
-                y=alt.Y("linea:N", sort="-x", title=None),
+                y=alt.Y("linea:N", title=None, sort=alt.EncodingSortField("mttr_h", order="descending")),
                 x=alt.X("mttr_h:Q", title="Horas"),
                 tooltip=["linea", "mttr_h", "fallas"],
             ).properties(height=250)
@@ -617,7 +617,7 @@ def dashboard_section():
             st.subheader("🔴 Peor MTBF por Línea")
             top_mtbf = df_kpi.nsmallest(10, "mtbf_h")
             chart = alt.Chart(top_mtbf).mark_bar(color="#4C78A8").encode(
-                y=alt.Y("linea:N", sort="-x", title=None),
+                y=alt.Y("linea:N", title=None, sort=alt.EncodingSortField("mtbf_h", order="ascending")),
                 x=alt.X("mtbf_h:Q", title="Horas"),
                 tooltip=["linea", "mtbf_h", "fallas"],
             ).properties(height=250)
@@ -643,7 +643,7 @@ def dashboard_section():
             ["mttr_h", "mtbf_h"],
             as_=["Métrica", "Horas"],
         ).mark_line(point=True).encode(
-            x=alt.X("mes_label:N", title=None, sort=None),
+            x=alt.X("mes_label:N", title=None, sort=alt.EncodingSortField("mes_label", order="ascending")),
             y=alt.Y("Horas:Q", title="Horas"),
             color=alt.Color("Métrica:N", scale=alt.Scale(
                 domain=["mttr_h", "mtbf_h"],
