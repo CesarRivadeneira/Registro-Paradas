@@ -19,7 +19,7 @@ class Linea(Base):
     __tablename__ = "lineas"
     id = Column(Integer, primary_key=True)
     nombre = Column(String, nullable=False)
-    sector_id = Column(Integer, ForeignKey("sectores.id"))
+    sector_id = Column(Integer, ForeignKey("sectores.id"), index=True)
     sector = relationship("Sector", back_populates="lineas")
     equipos = relationship("Equipo", back_populates="linea")
 
@@ -54,10 +54,10 @@ class Usuario(Base):
 class EventoMantenimiento(Base):
     __tablename__ = "eventos"
     id = Column(Integer, primary_key=True)
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=datetime.now, index=True)
     hora_inicio = Column(String, default="")
     duracion_minutos = Column(Integer, default=0)
-    equipo_id = Column(Integer, ForeignKey("equipos.id"))
+    equipo_id = Column(Integer, ForeignKey("equipos.id"), index=True)
     falla = Column(Text)
     accion = Column(Text)
     repuesto_id = Column(Integer, ForeignKey("repuestos.id"))

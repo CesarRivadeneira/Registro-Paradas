@@ -28,6 +28,7 @@ from database import (
     repuestos_bajo_stock,
     sumar_duracion_total,
     sumar_duracion_mes,
+    obtener_resumen_dashboard,
     crear_usuario,
     autenticar,
     hay_usuarios,
@@ -197,128 +198,7 @@ def page_inicio():
 
     st.markdown("---")
 
-    st.subheader("Filtrar datos")
-    todos_eventos = obtener_eventos()
-    todos_equipos = obtener_equipos()
-    todos_sectores = obtener_sectores()
-
-    col_f1, col_f2, col_f3 = st.columns(3)
-    with col_f1:
-        sec_filtro = st.selectbox(
-            "Sector", [None] + todos_sectores,
-            format_func=lambda x: "Todos" if x is None else x.nombre,
-            key="filtro_sector"
-        )
-    with col_f2:
-        lineas_filtro = []
-        if sec_filtro:
-            lineas_filtro = obtener_lineas_por_sector(sec_filtro.id)
-        lin_filtro = st.selectbox(
-            "Línea", [None] + lineas_filtro,
-            format_func=lambda x: "Todas" if x is None else x.nombre,
-            key="filtro_linea"
-        )
-    with col_f3:
-        equipos_filtro = []
-        if lin_filtro:
-            equipos_filtro = obtener_equipos_por_linea(lin_filtro.id)
-        eq_filtro = st.selectbox(
-            "Equipo", [None] + equipos_filtro,
-            format_func=lambda x: "Todos" if x is None else x.nombre,
-            key="filtro_equipo"
-        )
-
-    df_base = pd.DataFrame(
-        [
-            {
-                "Sector": e.equipo.linea.sector.nombre if e.equipo and e.equipo.linea and e.equipo.linea.sector else "",
-                "Línea": e.equipo.linea.nombre if e.equipo and e.equipo.linea else "",
-                "Equipo": e.equipo.nombre,
-                "Duración (min)": e.duracion_minutos,
-            }
-            for e in todos_eventos
-        ]
-    )
-
-    if sec_filtro:
-        df_base = df_base[df_base["Sector"] == sec_filtro.nombre]
-    if lin_filtro:
-        df_base = df_base[df_base["Línea"] == lin_filtro.nombre]
-    if eq_filtro:
-        df_base = df_base[df_base["Equipo"] == eq_filtro.nombre]
-
-    st.markdown("---")
-
-    col_g1, col_g2, col_g3 = st.columns(3)
-
-    with col_g1:
-        st.subheader("Por Sector")
-        if not df_base.empty:
-            grp = df_base.groupby("Sector").agg(Cantidad=("Equipo", "count"), Downtime=("Duración (min)", "sum")).reset_index()
-            chart = alt.Chart(grp).mark_bar(color="#4C78A8").encode(
-                x=alt.X("Sector:N", axis=alt.Axis(labelAngle=-45)),
-                y=alt.Y("Cantidad:Q"),
-            ).properties(height=250)
-            st.altair_chart(chart, use_container_width=True)
-        else:
-            st.info("Sin datos")
-
-    with col_g2:
-        st.subheader("Por Línea")
-        if not df_base.empty:
-            grp = df_base.groupby("Línea").agg(Cantidad=("Equipo", "count"), Downtime=("Duración (min)", "sum")).reset_index()
-            chart = alt.Chart(grp).mark_bar(color="#E45756").encode(
-                x=alt.X("Línea:N", axis=alt.Axis(labelAngle=-45)),
-                y=alt.Y("Cantidad:Q"),
-            ).properties(height=250)
-            st.altair_chart(chart, use_container_width=True)
-        else:
-            st.info("Sin datos")
-
-    with col_g3:
-        st.subheader("Por Equipo")
-        if not df_base.empty:
-            grp = df_base.groupby("Equipo").agg(Cantidad=("Equipo", "count"), Downtime=("Duración (min)", "sum")).reset_index()
-            top = grp.sort_values("Cantidad", ascending=False).head(10)
-            chart = alt.Chart(top).mark_bar(color="#72B7B2").encode(
-                x=alt.X("Equipo:N", axis=alt.Axis(labelAngle=-45)),
-                y=alt.Y("Cantidad:Q"),
-            ).properties(height=250)
-            st.altair_chart(chart, use_container_width=True)
-        else:
-            st.info("Sin datos")
-
-    st.markdown("---")
-    st.subheader("Detalle de paradas")
-
-    eventos_filt = todos_eventos
-    if sec_filtro:
-        eventos_filt = [e for e in eventos_filt if e.equipo and e.equipo.linea and e.equipo.linea.sector and e.equipo.linea.sector.nombre == sec_filtro.nombre]
-    if lin_filtro:
-        eventos_filt = [e for e in eventos_filt if e.equipo and e.equipo.linea and e.equipo.linea.nombre == lin_filtro.nombre]
-    if eq_filtro:
-        eventos_filt = [e for e in eventos_filt if e.equipo and e.equipo.nombre == eq_filtro.nombre]
-
-    if eventos_filt:
-        df_detalle = pd.DataFrame(
-            [
-                {
-                    "Sector": e.equipo.linea.sector.nombre if e.equipo and e.equipo.linea and e.equipo.linea.sector else "",
-                    "Línea": e.equipo.linea.nombre if e.equipo and e.equipo.linea else "",
-                    "Equipo": e.equipo.nombre,
-                    "Fecha": e.fecha,
-                    "Hora": e.hora_inicio,
-                    "Duración": fmt_duracion(e.duracion_minutos) if e.duracion_minutos else "",
-                    "Falla": e.falla,
-                    "Acción": e.accion,
-                    "Técnico": e.tecnico,
-                }
-                for e in sorted(eventos_filt, key=lambda x: x.fecha or datetime.min, reverse=True)
-            ]
-        )
-        st.dataframe(df_detalle, width="stretch")
-    else:
-        st.info("No hay paradas con los filtros seleccionados")
+    dashboard_section()
 
 
 def page_sectores():
@@ -674,6 +554,121 @@ def page_usuarios():
                     st.rerun()
     else:
         st.info("No hay usuarios registrados")
+
+
+@st.fragment
+def dashboard_section():
+    st.subheader("Filtrar datos")
+    df_base = obtener_resumen_dashboard()
+    todos_sectores = obtener_sectores()
+
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        sec_filtro = st.selectbox(
+            "Sector", [None] + todos_sectores,
+            format_func=lambda x: "Todos" if x is None else x.nombre,
+            key="filtro_sector"
+        )
+    with col_f2:
+        lineas_filtro = []
+        if sec_filtro:
+            lineas_filtro = obtener_lineas_por_sector(sec_filtro.id)
+        lin_filtro = st.selectbox(
+            "Línea", [None] + lineas_filtro,
+            format_func=lambda x: "Todas" if x is None else x.nombre,
+            key="filtro_linea"
+        )
+    with col_f3:
+        equipos_filtro = []
+        if lin_filtro:
+            equipos_filtro = obtener_equipos_por_linea(lin_filtro.id)
+        eq_filtro = st.selectbox(
+            "Equipo", [None] + equipos_filtro,
+            format_func=lambda x: "Todos" if x is None else x.nombre,
+            key="filtro_equipo"
+        )
+
+    df = df_base.copy()
+    if sec_filtro:
+        df = df[df["sector"] == sec_filtro.nombre]
+    if lin_filtro:
+        df = df[df["linea"] == lin_filtro.nombre]
+    if eq_filtro:
+        df = df[df["equipo"] == eq_filtro.nombre]
+
+    st.markdown("---")
+
+    col_g1, col_g2, col_g3 = st.columns(3)
+
+    with col_g1:
+        st.subheader("Por Sector")
+        if not df.empty:
+            grp = df.groupby("sector").agg(Cantidad=("equipo", "count"), Downtime=("duracion_minutos", "sum")).reset_index()
+            chart = alt.Chart(grp).mark_bar(color="#4C78A8").encode(
+                x=alt.X("sector:N", axis=alt.Axis(labelAngle=-45)),
+                y=alt.Y("Cantidad:Q"),
+            ).properties(height=250)
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.info("Sin datos")
+
+    with col_g2:
+        st.subheader("Por Línea")
+        if not df.empty:
+            grp = df.groupby("linea").agg(Cantidad=("equipo", "count"), Downtime=("duracion_minutos", "sum")).reset_index()
+            chart = alt.Chart(grp).mark_bar(color="#E45756").encode(
+                x=alt.X("linea:N", axis=alt.Axis(labelAngle=-45)),
+                y=alt.Y("Cantidad:Q"),
+            ).properties(height=250)
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.info("Sin datos")
+
+    with col_g3:
+        st.subheader("Por Equipo")
+        if not df.empty:
+            grp = df.groupby("equipo").agg(Cantidad=("equipo", "count"), Downtime=("duracion_minutos", "sum")).reset_index()
+            top = grp.sort_values("Cantidad", ascending=False).head(10)
+            chart = alt.Chart(top).mark_bar(color="#72B7B2").encode(
+                x=alt.X("equipo:N", axis=alt.Axis(labelAngle=-45)),
+                y=alt.Y("Cantidad:Q"),
+            ).properties(height=250)
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.info("Sin datos")
+
+    st.markdown("---")
+    st.subheader("Detalle de paradas")
+    todos_eventos = obtener_eventos()
+    eventos_filt = todos_eventos
+    if sec_filtro:
+        eventos_filt = [e for e in eventos_filt if e.equipo and e.equipo.linea and e.equipo.linea.sector and e.equipo.linea.sector.nombre == sec_filtro.nombre]
+    if lin_filtro:
+        eventos_filt = [e for e in eventos_filt if e.equipo and e.equipo.linea and e.equipo.linea.nombre == lin_filtro.nombre]
+    if eq_filtro:
+        eventos_filt = [e for e in eventos_filt if e.equipo and e.equipo.nombre == eq_filtro.nombre]
+
+    if eventos_filt:
+        df_detalle = pd.DataFrame(
+            [
+                {
+                    "Sector": e.equipo.linea.sector.nombre if e.equipo and e.equipo.linea and e.equipo.linea.sector else "",
+                    "Línea": e.equipo.linea.nombre if e.equipo and e.equipo.linea else "",
+                    "Equipo": e.equipo.nombre,
+                    "Fecha": e.fecha,
+                    "Hora": e.hora_inicio,
+                    "Duración": fmt_duracion(e.duracion_minutos) if e.duracion_minutos else "",
+                    "Falla": e.falla,
+                    "Acción": e.accion,
+                    "Técnico": e.tecnico,
+                }
+                for e in sorted(eventos_filt, key=lambda x: x.fecha or datetime.min, reverse=True)
+            ]
+        )
+        st.dataframe(df_detalle, width="stretch")
+    else:
+        st.info("No hay paradas con los filtros seleccionados")
+
 
 # =====================================
 # NAVEGACIÓN
