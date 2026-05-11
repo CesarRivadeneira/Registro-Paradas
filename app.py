@@ -61,7 +61,7 @@ st.set_page_config(page_title="Gestión de Mantenimiento", layout="wide")
 st.markdown(
     """
 <style>
-[data-testid="stStatusWidget"] { display: none; }
+header[data-testid="stHeader"] { display: none; }
 </style>
 """,
     unsafe_allow_html=True,
