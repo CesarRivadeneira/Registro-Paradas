@@ -9,7 +9,7 @@ from datetime import datetime
 import streamlit as st
 from sqlalchemy import create_engine, text, func
 from sqlalchemy.orm import sessionmaker, joinedload
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import SQLAlchemyError, OperationalError
 
 try:
     from config import DATABASE_URL
@@ -41,6 +41,10 @@ def init_db():
                 raise RuntimeError(
                     f"No se pudo conectar a la base de datos tras {max_attempts} intentos: {e}"
                 ) from e
+        except SQLAlchemyError:
+            # Tablas/sequences ya existen (ej. PostgreSQL reintenta crear sequences existentes)
+            _migrar_base()
+            return
 
 
 def _migrar_base():

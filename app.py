@@ -856,16 +856,17 @@ def dashboard_section():
     df_evol = calcular_evolucion_mensual(modo)
     if not df_evol.empty:
         df_evol["mes_label"] = pd.to_datetime(df_evol["mes"]).dt.strftime("%b %y")
-        base = alt.Chart(df_evol).encode(x=alt.X("mes_label:N", title=None, sort=None))
-        line_mttr = base.mark_line(point=True, color="#E45756").encode(
-            y=alt.Y("mttr_h:Q", title="Horas"),
-            tooltip=["mes_label", "mttr_h"],
+        df_long = df_evol.melt(
+            id_vars=["mes_label"],
+            value_vars=["mttr_h", "mtbf_h"],
+            var_name="Medida", value_name="Horas",
         )
-        line_mtbf = base.mark_line(point=True, color="#4C78A8").encode(
-            y=alt.Y("mtbf_h:Q", title=""),
-            tooltip=["mes_label", "mtbf_h"],
-        )
-        chart = alt.layer(line_mttr, line_mtbf).resolve_scale(y="shared").properties(height=300)
+        chart = alt.Chart(df_long).mark_line(point=True).encode(
+            x=alt.X("mes_label:N", title=None, sort=None),
+            y=alt.Y("Horas:Q", title="Horas"),
+            color=alt.Color("Medida:N", legend=alt.Legend(title=None)),
+            tooltip=["mes_label", "Horas", "Medida"],
+        ).properties(height=300)
         st.altair_chart(chart, use_container_width=True)
     else:
         st.info("Sin datos históricos suficientes")
