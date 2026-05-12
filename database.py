@@ -11,7 +11,11 @@ from sqlalchemy import create_engine, text, func
 from sqlalchemy.orm import sessionmaker, joinedload
 from sqlalchemy.exc import OperationalError
 
-from config import DATABASE_URL
+try:
+    from config import DATABASE_URL
+except Exception:
+    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///mantenimiento.db")
+
 from models import Base, Sector, Linea, Equipo, Repuesto, Usuario, EventoMantenimiento, SolicitudReparacion
 
 engine = create_engine(
