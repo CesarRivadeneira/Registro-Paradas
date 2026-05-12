@@ -67,3 +67,26 @@ class EventoMantenimiento(Base):
     equipo = relationship("Equipo")
     repuesto = relationship("Repuesto")
     usuario = relationship("Usuario")
+
+
+class SolicitudReparacion(Base):
+    __tablename__ = "solicitudes_reparacion"
+    id = Column(Integer, primary_key=True)
+    fecha_solicitud = Column(DateTime, default=datetime.now, index=True)
+    linea_id = Column(Integer, ForeignKey("lineas.id"), nullable=False, index=True)
+    equipo_id = Column(Integer, ForeignKey("equipos.id"), nullable=True)
+    descripcion = Column(Text, nullable=False)
+    solicitante_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    estado = Column(String, default="pendiente")
+    fecha_programada = Column(DateTime, nullable=True)
+    programado_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    fecha_ejecucion = Column(DateTime, nullable=True)
+    ejecutado_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    observaciones = Column(Text, nullable=True)
+    motivo_rechazo = Column(Text, nullable=True)
+
+    linea = relationship("Linea", backref="solicitudes")
+    equipo = relationship("Equipo", backref="solicitudes")
+    solicitante = relationship("Usuario", foreign_keys=[solicitante_id], backref="solicitudes_creadas")
+    programado_por = relationship("Usuario", foreign_keys=[programado_por_id], backref="solicitudes_programadas")
+    ejecutado_por = relationship("Usuario", foreign_keys=[ejecutado_por_id], backref="solicitudes_ejecutadas")

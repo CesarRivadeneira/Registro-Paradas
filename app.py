@@ -37,6 +37,11 @@ from database import (
     hay_usuarios,
     obtener_usuarios,
     desactivar_usuario,
+    crear_solicitud,
+    obtener_solicitudes,
+    programar_solicitud,
+    completar_solicitud,
+    rechazar_solicitud,
 )
 
 DURACION_OPTS = {
@@ -522,7 +527,7 @@ def page_usuarios():
             u_apellido = st.text_input("Apellido", key="u_apellido")
             u_rol = st.selectbox(
                 "Rol",
-                ["tecnico", "operario", "produccion"],
+                ["tecnico", "operario", "produccion", "supervisor"],
                 key="u_rol",
             )
 
@@ -776,6 +781,128 @@ def dashboard_section():
         st.info("No hay paradas con los filtros seleccionados")
 
 
+def page_solicitudes():
+    st.header("Solicitudes de Reparación")
+
+    if rol in ("admin", "supervisor", "tecnico", "operario"):
+        with st.expander("Nueva solicitud", expanded=True):
+            sectores = obtener_sectores()
+            if sectores:
+                sector_sel = st.selectbox(
+                    "Sector", sectores, format_func=lambda x: x.nombre,
+                    key="sol_sector"
+                )
+                lineas_del_sector = obtener_lineas_por_sector(sector_sel.id)
+                if lineas_del_sector:
+                    linea_sel = st.selectbox(
+                        "Línea", lineas_del_sector, format_func=lambda x: x.nombre,
+                        key="sol_linea"
+                    )
+                    equipos_de_linea = obtener_equipos_por_linea(linea_sel.id)
+                    equipo_sel = st.selectbox(
+                        "Equipo (opcional)",
+                        [None] + equipos_de_linea,
+                        format_func=lambda x: "— Toda la línea —" if x is None else f"{x.nombre} ({x.tipo})",
+                        key="sol_equipo"
+                    )
+                    descripcion = st.text_area("Descripción de la reparación necesaria")
+                    if st.button("Solicitar reparación", use_container_width=True):
+                        if not descripcion.strip():
+                            st.error("La descripción es obligatoria")
+                        else:
+                            crear_solicitud(
+                                linea_sel.id,
+                                descripcion.strip(),
+                                user.id,
+                                equipo_id=equipo_sel.id if equipo_sel else None,
+                            )
+                            st.success("Solicitud creada correctamente")
+                            st.rerun()
+                else:
+                    st.info("No hay líneas en este sector")
+            else:
+                st.info("No hay sectores registrados")
+
+    st.markdown("---")
+    st.subheader("Todas las solicitudes")
+
+    solicitudes = obtener_solicitudes()
+    if not solicitudes:
+        st.info("No hay solicitudes registradas")
+        return
+
+    estados_opts = ["Todas", "pendiente", "programada", "realizada", "rechazada"]
+    filtro_estado = st.selectbox("Filtrar por estado", estados_opts, key="sol_filtro")
+
+    solicitudes_filt = [s for s in solicitudes if filtro_estado == "Todas" or s.estado == filtro_estado]
+
+    df = pd.DataFrame([
+        {
+            "ID": s.id,
+            "Fecha": s.fecha_solicitud.strftime("%d/%m/%y"),
+            "Línea": s.linea.nombre if s.linea else "",
+            "Equipo": s.equipo.nombre if s.equipo else "—",
+            "Solicitante": s.solicitante.nombre_completo or s.solicitante.username if s.solicitante else "",
+            "Estado": s.estado,
+            "Fecha Prog.": s.fecha_programada.strftime("%d/%m/%y") if s.fecha_programada else "—",
+            "Ejecutada": s.fecha_ejecucion.strftime("%d/%m/%y") if s.fecha_ejecucion else "—",
+        }
+        for s in solicitudes_filt
+    ])
+    st.dataframe(df, width="stretch")
+
+    if rol in ("admin", "supervisor") and solicitudes_filt:
+        st.markdown("---")
+        st.subheader("Gestionar solicitud")
+
+        sol_keys = {
+            s.id: f"#{s.id} — {s.linea.nombre if s.linea else ''} ({s.estado})"
+            for s in solicitudes_filt
+        }
+        sel_id = st.selectbox(
+            "Seleccionar solicitud", list(sol_keys.keys()),
+            format_func=lambda x: sol_keys[x], key="sol_gestion"
+        )
+        sol_sel = next((s for s in solicitudes_filt if s.id == sel_id), None)
+        if sol_sel:
+            st.write(f"**Descripción:** {sol_sel.descripcion}")
+
+            if sol_sel.estado == "pendiente":
+                col_p1, col_p2 = st.columns(2)
+                with col_p1:
+                    fecha = st.date_input("Fecha programada para la intervención", key="prog_fecha")
+                    if st.button("📅 Programar solicitud", use_container_width=True):
+                        programar_solicitud(
+                            sol_sel.id, datetime.combine(fecha, datetime.min.time()), user.id
+                        )
+                        st.success("Solicitud programada")
+                        st.rerun()
+                with col_p2:
+                    with st.form("rechazar_form"):
+                        motivo = st.text_area("Motivo del rechazo")
+                        if st.form_submit_button("❌ Rechazar solicitud", type="primary", use_container_width=True):
+                            if not motivo.strip():
+                                st.error("Debe indicar el motivo del rechazo")
+                            else:
+                                rechazar_solicitud(sol_sel.id, user.id, motivo.strip())
+                                st.success("Solicitud rechazada")
+                                st.rerun()
+
+            elif sol_sel.estado == "programada":
+                with st.form("completar_form"):
+                    obs = st.text_area("Observaciones (opcional)")
+                    if st.form_submit_button("✅ Completar solicitud", type="primary", use_container_width=True):
+                        completar_solicitud(sol_sel.id, user.id, obs.strip())
+                        st.success("Solicitud completada")
+                        st.rerun()
+
+            elif sol_sel.estado == "rechazada":
+                st.warning(f"**Motivo de rechazo:** {sol_sel.motivo_rechazo}")
+            elif sol_sel.estado == "realizada":
+                if sol_sel.observaciones:
+                    st.info(f"**Observaciones:** {sol_sel.observaciones}")
+
+
 # =====================================
 # NAVEGACIÓN
 # =====================================
@@ -784,11 +911,11 @@ _pg_paradas = None
 
 pages = [st.Page(page_inicio, title="Inicio", icon="🏠", default=True)]
 
-if rol in ("admin", "tecnico", "operario"):
+if rol in ("admin", "supervisor", "tecnico", "operario"):
     _pg_paradas = st.Page(page_paradas, title="Registrar Parada", icon="➕")
     pages.append(_pg_paradas)
 
-if rol in ("admin", "tecnico"):
+if rol in ("admin", "supervisor", "tecnico"):
     pages.append(st.Page(page_sectores, title="Sectores", icon="🏭"))
     pages.append(st.Page(page_lineas, title="Líneas", icon="📦"))
     pages.append(st.Page(page_equipos, title="Equipos", icon="🤖"))
@@ -796,7 +923,10 @@ if rol in ("admin", "tecnico"):
 if rol == "admin":
     pages.append(st.Page(page_repuestos, title="Repuestos", icon="🔩"))
 
-if rol in ("admin", "tecnico", "operario", "produccion"):
+if rol in ("admin", "supervisor", "tecnico", "operario", "produccion"):
+    pages.append(st.Page(page_solicitudes, title="Solicitudes", icon="🔧"))
+
+if rol in ("admin", "supervisor", "tecnico", "operario", "produccion"):
     pages.append(st.Page(page_historial, title="Historial", icon="📋"))
 
 if rol == "admin":

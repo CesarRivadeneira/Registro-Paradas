@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker, joinedload
 from sqlalchemy.exc import OperationalError
 
 from config import DATABASE_URL
-from models import Base, Sector, Linea, Equipo, Repuesto, Usuario, EventoMantenimiento
+from models import Base, Sector, Linea, Equipo, Repuesto, Usuario, EventoMantenimiento, SolicitudReparacion
 
 engine = create_engine(
     DATABASE_URL,
@@ -82,6 +82,8 @@ def _crear_indices(db, dialect):
         "CREATE INDEX IF NOT EXISTS ix_eventos_equipo_id ON eventos(equipo_id)",
         "CREATE INDEX IF NOT EXISTS ix_eventos_fecha ON eventos(fecha)",
         "CREATE INDEX IF NOT EXISTS ix_lineas_sector_id ON lineas(sector_id)",
+        "CREATE INDEX IF NOT EXISTS ix_solicitudes_linea_id ON solicitudes_reparacion(linea_id)",
+        "CREATE INDEX IF NOT EXISTS ix_solicitudes_fecha ON solicitudes_reparacion(fecha_solicitud)",
     ]
     for idx in indices:
         try:
@@ -644,3 +646,72 @@ def calcular_evolucion_mensual(modo, meses=12):
         data.append({"mes": mes, "mttr_h": mttr, "mtbf_h": mtbf})
 
     return pd.DataFrame(data).sort_values("mes")
+
+
+# =====================================
+# CRUD SOLICITUDES DE REPARACIÓN
+# =====================================
+
+
+def crear_solicitud(linea_id, descripcion, solicitante_id, equipo_id=None):
+    with get_db() as db:
+        solicitud = SolicitudReparacion(
+            linea_id=linea_id,
+            equipo_id=equipo_id,
+            descripcion=descripcion,
+            solicitante_id=solicitante_id,
+        )
+        db.add(solicitud)
+        db.commit()
+    st.cache_data.clear()
+
+
+def obtener_solicitudes():
+    with get_db() as db:
+        return (
+            db.query(SolicitudReparacion)
+            .options(
+                joinedload(SolicitudReparacion.linea).joinedload(Linea.sector),
+                joinedload(SolicitudReparacion.equipo),
+                joinedload(SolicitudReparacion.solicitante),
+                joinedload(SolicitudReparacion.programado_por),
+                joinedload(SolicitudReparacion.ejecutado_por),
+            )
+            .order_by(SolicitudReparacion.fecha_solicitud.desc())
+            .all()
+        )
+
+
+def programar_solicitud(solicitud_id, fecha_programada, usuario_id):
+    with get_db() as db:
+        sol = db.query(SolicitudReparacion).get(solicitud_id)
+        if sol and sol.estado == "pendiente":
+            sol.estado = "programada"
+            sol.fecha_programada = fecha_programada
+            sol.programado_por_id = usuario_id
+            db.commit()
+    st.cache_data.clear()
+
+
+def completar_solicitud(solicitud_id, usuario_id, observaciones=""):
+    with get_db() as db:
+        sol = db.query(SolicitudReparacion).get(solicitud_id)
+        if sol and sol.estado == "programada":
+            sol.estado = "realizada"
+            sol.fecha_ejecucion = datetime.now()
+            sol.ejecutado_por_id = usuario_id
+            sol.observaciones = observaciones or None
+            db.commit()
+    st.cache_data.clear()
+
+
+def rechazar_solicitud(solicitud_id, usuario_id, motivo):
+    with get_db() as db:
+        sol = db.query(SolicitudReparacion).get(solicitud_id)
+        if sol and sol.estado == "pendiente":
+            sol.estado = "rechazada"
+            sol.ejecutado_por_id = usuario_id
+            sol.fecha_ejecucion = datetime.now()
+            sol.motivo_rechazo = motivo
+            db.commit()
+    st.cache_data.clear()
