@@ -22,6 +22,7 @@ from database import (
     obtener_repuestos,
     crear_evento,
     obtener_eventos,
+    obtener_eventos_por_usuario,
     obtener_eventos_recientes,
     contar_eventos_mes,
     contar_eventos_por_equipo,
@@ -571,6 +572,73 @@ def page_paradas():
             )
             st.success("Parada registrada correctamente")
 
+    # --- EDITAR PARADA (propias) ---
+    puede_editar = tiene_permiso("editar_parada_cualquiera") or tiene_permiso("editar_parada_propia")
+    if puede_editar:
+        st.markdown("---")
+        st.header("Editar parada")
+        if tiene_permiso("editar_parada_cualquiera"):
+            eventos_propios = obtener_eventos()
+        else:
+            eventos_propios = obtener_eventos_por_usuario(user.id)
+
+        editables = [e for e in eventos_propios if puede_editar_parada(e)]
+        if editables:
+            sel_e = st.selectbox(
+                "Seleccionar parada a editar",
+                editables,
+                format_func=lambda x: f"#{x.id} — {x.equipo.nombre} ({x.fecha.strftime('%d/%m/%y')})",
+                key="edit_parada_sel",
+            )
+            with st.form("form_editar_parada"):
+                col_e1, col_e2 = st.columns(2)
+                with col_e1:
+                    nueva_fecha = st.date_input("Fecha", value=sel_e.fecha, key="ef_fecha")
+                    nueva_hora = st.time_input("Hora inicio", value=None if not sel_e.hora_inicio else datetime.strptime(sel_e.hora_inicio, "%H:%M").time(), key="ef_hora")
+                with col_e2:
+                    dur_idx = 4
+                    for i, (k, v) in enumerate(DURACION_OPTS.items()):
+                        if v == sel_e.duracion_minutos:
+                            dur_idx = i
+                            break
+                    nueva_duracion = st.selectbox("Duración", list(DURACION_OPTS.keys()), index=dur_idx, key="ef_duracion")
+                nueva_falla = st.text_area("Falla", value=sel_e.falla, key="ef_falla")
+                nueva_accion = st.text_area("Acción", value=sel_e.accion, key="ef_accion")
+                repuestos = obtener_repuestos()
+                rep_opts = [None] + repuestos
+                rep_idx = 0
+                for i, r in enumerate(rep_opts):
+                    if r and sel_e.repuesto_id == r.id:
+                        rep_idx = i
+                        break
+                nuevo_rep = st.selectbox(
+                    "Repuesto",
+                    rep_opts,
+                    format_func=lambda x: "Ninguno" if x is None else f"{x.nombre} (stock: {x.stock})",
+                    index=rep_idx,
+                    key="ef_repuesto",
+                )
+                if st.form_submit_button("Guardar cambios", type="primary", use_container_width=True):
+                    if not nueva_falla.strip():
+                        st.error("La descripción de la falla es obligatoria")
+                    elif not nueva_accion.strip():
+                        st.error("La acción es obligatoria")
+                    else:
+                        hora_str = nueva_hora.strftime("%H:%M") if nueva_hora else ""
+                        editar_evento(
+                            sel_e.id,
+                            datetime.combine(nueva_fecha, datetime.min.time()),
+                            hora_str,
+                            DURACION_OPTS[nueva_duracion],
+                            nueva_falla.strip(),
+                            nueva_accion.strip(),
+                            nuevo_rep.id if nuevo_rep else None,
+                        )
+                        st.success("Parada actualizada correctamente")
+                        st.rerun()
+        else:
+            st.info("No hay paradas disponibles para editar")
+
 
 def page_historial():
     st.header("Historial de Paradas")
@@ -632,67 +700,6 @@ def page_historial():
             file_name=f"paradas_mantenimiento_{date.today()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-
-    # --- EDITAR PARADA ---
-    puede_editar = tiene_permiso("editar_parada_cualquiera") or tiene_permiso("editar_parada_propia")
-    if puede_editar and eventos:
-        st.markdown("---")
-        st.header("Editar parada")
-
-        editables = [e for e in eventos if puede_editar_parada(e)]
-        if editables:
-            sel_e = st.selectbox(
-                "Seleccionar parada a editar",
-                editables,
-                format_func=lambda x: f"#{x.id} — {x.equipo.nombre} ({x.fecha.strftime('%d/%m/%y')})",
-                key="edit_parada_sel",
-            )
-            with st.form("form_editar_parada"):
-                col_e1, col_e2 = st.columns(2)
-                with col_e1:
-                    nueva_fecha = st.date_input("Fecha", value=sel_e.fecha, key="ef_fecha")
-                    nueva_hora = st.time_input("Hora inicio", value=None if not sel_e.hora_inicio else datetime.strptime(sel_e.hora_inicio, "%H:%M").time(), key="ef_hora")
-                with col_e2:
-                    dur_idx = 4
-                    for i, (k, v) in enumerate(DURACION_OPTS.items()):
-                        if v == sel_e.duracion_minutos:
-                            dur_idx = i
-                            break
-                    nueva_duracion = st.selectbox("Duración", list(DURACION_OPTS.keys()), index=dur_idx, key="ef_duracion")
-                nueva_falla = st.text_area("Falla", value=sel_e.falla, key="ef_falla")
-                nueva_accion = st.text_area("Acción", value=sel_e.accion, key="ef_accion")
-                repuestos = obtener_repuestos()
-                rep_opts = [None] + repuestos
-                rep_idx = 0
-                for i, r in enumerate(rep_opts):
-                    if r and sel_e.repuesto_id == r.id:
-                        rep_idx = i
-                        break
-                nuevo_rep = st.selectbox(
-                    "Repuesto",
-                    rep_opts,
-                    format_func=lambda x: "Ninguno" if x is None else f"{x.nombre} (stock: {x.stock})",
-                    index=rep_idx,
-                    key="ef_repuesto",
-                )
-                if st.form_submit_button("Guardar cambios", type="primary", use_container_width=True):
-                    if not nueva_falla.strip():
-                        st.error("La descripción de la falla es obligatoria")
-                    elif not nueva_accion.strip():
-                        st.error("La acción es obligatoria")
-                    else:
-                        hora_str = nueva_hora.strftime("%H:%M") if nueva_hora else ""
-                        editar_evento(
-                            sel_e.id,
-                            datetime.combine(nueva_fecha, datetime.min.time()),
-                            hora_str,
-                            DURACION_OPTS[nueva_duracion],
-                            nueva_falla.strip(),
-                            nueva_accion.strip(),
-                            nuevo_rep.id if nuevo_rep else None,
-                        )
-                        st.success("Parada actualizada correctamente")
-                        st.rerun()
 
 
 def page_usuarios():

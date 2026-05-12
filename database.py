@@ -440,6 +440,22 @@ def obtener_eventos():
         )
 
 
+def obtener_eventos_por_usuario(user_id):
+    with get_db() as db:
+        return (
+            db.query(EventoMantenimiento)
+            .options(
+                joinedload(EventoMantenimiento.equipo)
+                .joinedload(Equipo.linea)
+                .joinedload(Linea.sector),
+                joinedload(EventoMantenimiento.repuesto),
+                joinedload(EventoMantenimiento.usuario),
+            )
+            .filter(EventoMantenimiento.user_id == user_id)
+            .all()
+        )
+
+
 def obtener_eventos_recientes(limite=10):
     with get_db() as db:
         return (
