@@ -187,8 +187,10 @@ st.set_page_config(page_title="Gestión de Mantenimiento", layout="wide")
 st.markdown(
     """
 <style>
-[data-testid="stToolbar"] { display: none; }
-[data-testid="stDecoration"] { display: none; }
+@media (min-width: 768px) {
+  [data-testid="stToolbar"] { display: none; }
+  [data-testid="stDecoration"] { display: none; }
+}
 </style>
 """,
     unsafe_allow_html=True,
