@@ -1,3 +1,4 @@
+import json
 import streamlit as st
 import pandas as pd
 import altair as alt
@@ -42,6 +43,8 @@ from database import (
     programar_solicitud,
     completar_solicitud,
     rechazar_solicitud,
+    editar_evento,
+    guardar_permisos_extras,
 )
 
 DURACION_OPTS = {
@@ -60,6 +63,120 @@ def fmt_duracion(minutos):
         m = minutos % 60
         return f"{h}h {m}m" if m else f"{h}h"
     return f"{minutos} min"
+
+
+PERMISOS_POR_ROL = {
+    "admin": {
+        "ver_sectores": True, "crear_sectores": True, "eliminar_sectores": True,
+        "ver_lineas": True, "crear_lineas": True, "eliminar_lineas": True,
+        "ver_equipos": True, "crear_equipos": True, "eliminar_equipos": True,
+        "ver_repuestos": True, "crear_repuestos": True,
+        "registrar_parada": True,
+        "editar_parada_propia": True, "editar_parada_cualquiera": True,
+        "ver_historial": True, "exportar_historial": True,
+        "ver_solicitudes": True, "crear_solicitudes": True, "gestionar_solicitudes": True,
+        "ver_usuarios": True, "gestionar_usuarios": True,
+    },
+    "supervisor": {
+        "ver_sectores": True, "crear_sectores": False, "eliminar_sectores": False,
+        "ver_lineas": True, "crear_lineas": False, "eliminar_lineas": False,
+        "ver_equipos": True, "crear_equipos": False, "eliminar_equipos": False,
+        "ver_repuestos": False, "crear_repuestos": False,
+        "registrar_parada": True,
+        "editar_parada_propia": True, "editar_parada_cualquiera": True,
+        "ver_historial": True, "exportar_historial": False,
+        "ver_solicitudes": True, "crear_solicitudes": True, "gestionar_solicitudes": True,
+        "ver_usuarios": False, "gestionar_usuarios": False,
+    },
+    "tecnico": {
+        "ver_sectores": True, "crear_sectores": False, "eliminar_sectores": False,
+        "ver_lineas": True, "crear_lineas": False, "eliminar_lineas": False,
+        "ver_equipos": True, "crear_equipos": False, "eliminar_equipos": False,
+        "ver_repuestos": False, "crear_repuestos": False,
+        "registrar_parada": True,
+        "editar_parada_propia": True, "editar_parada_cualquiera": False,
+        "ver_historial": True, "exportar_historial": False,
+        "ver_solicitudes": True, "crear_solicitudes": True, "gestionar_solicitudes": False,
+        "ver_usuarios": False, "gestionar_usuarios": False,
+    },
+    "operario": {
+        "ver_sectores": False, "crear_sectores": False, "eliminar_sectores": False,
+        "ver_lineas": False, "crear_lineas": False, "eliminar_lineas": False,
+        "ver_equipos": False, "crear_equipos": False, "eliminar_equipos": False,
+        "ver_repuestos": False, "crear_repuestos": False,
+        "registrar_parada": True,
+        "editar_parada_propia": True, "editar_parada_cualquiera": False,
+        "ver_historial": True, "exportar_historial": False,
+        "ver_solicitudes": True, "crear_solicitudes": True, "gestionar_solicitudes": False,
+        "ver_usuarios": False, "gestionar_usuarios": False,
+    },
+    "produccion": {
+        "ver_sectores": False, "crear_sectores": False, "eliminar_sectores": False,
+        "ver_lineas": False, "crear_lineas": False, "eliminar_lineas": False,
+        "ver_equipos": False, "crear_equipos": False, "eliminar_equipos": False,
+        "ver_repuestos": False, "crear_repuestos": False,
+        "registrar_parada": False,
+        "editar_parada_propia": False, "editar_parada_cualquiera": False,
+        "ver_historial": True, "exportar_historial": False,
+        "ver_solicitudes": True, "crear_solicitudes": False, "gestionar_solicitudes": False,
+        "ver_usuarios": False, "gestionar_usuarios": False,
+    },
+}
+
+PERMISOS_DISPONIBLES = {
+    "Sectores": ["ver_sectores", "crear_sectores", "eliminar_sectores"],
+    "Líneas": ["ver_lineas", "crear_lineas", "eliminar_lineas"],
+    "Equipos": ["ver_equipos", "crear_equipos", "eliminar_equipos"],
+    "Repuestos": ["ver_repuestos", "crear_repuestos"],
+    "Paradas": ["registrar_parada", "editar_parada_propia", "editar_parada_cualquiera"],
+    "Historial": ["ver_historial", "exportar_historial"],
+    "Solicitudes": ["ver_solicitudes", "crear_solicitudes", "gestionar_solicitudes"],
+    "Usuarios": ["ver_usuarios", "gestionar_usuarios"],
+}
+
+_ETIQUETAS_PERMISOS = {
+    "ver_sectores": "Ver sectores",
+    "crear_sectores": "Crear sectores",
+    "eliminar_sectores": "Eliminar sectores",
+    "ver_lineas": "Ver líneas",
+    "crear_lineas": "Crear líneas",
+    "eliminar_lineas": "Eliminar líneas",
+    "ver_equipos": "Ver equipos",
+    "crear_equipos": "Crear equipos",
+    "eliminar_equipos": "Eliminar equipos",
+    "ver_repuestos": "Ver repuestos",
+    "crear_repuestos": "Crear repuestos",
+    "registrar_parada": "Registrar paradas",
+    "editar_parada_propia": "Editar paradas propias",
+    "editar_parada_cualquiera": "Editar cualquier parada",
+    "ver_historial": "Ver historial",
+    "exportar_historial": "Exportar historial a Excel",
+    "ver_solicitudes": "Ver solicitudes",
+    "crear_solicitudes": "Crear solicitudes",
+    "gestionar_solicitudes": "Gestionar solicitudes (programar/completar/rechazar)",
+    "ver_usuarios": "Ver usuarios",
+    "gestionar_usuarios": "Gestionar usuarios (crear/activar/desactivar)",
+}
+
+
+def tiene_permiso(permiso):
+    permisos = PERMISOS_POR_ROL.get(st.session_state.user.rol, {}).copy()
+    extra = st.session_state.user.permisos_extra
+    if extra:
+        try:
+            permisos.update(json.loads(extra))
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return permisos.get(permiso, False)
+
+
+def puede_editar_parada(evento):
+    if tiene_permiso("editar_parada_cualquiera"):
+        return True
+    if tiene_permiso("editar_parada_propia") and evento.user_id == st.session_state.user.id:
+        return True
+    return False
+
 
 # =====================================
 # CONFIG STREAMLIT
@@ -213,7 +330,7 @@ def page_inicio():
 def page_sectores():
     st.header("Sectores")
 
-    if rol == "admin":
+    if tiene_permiso("crear_sectores"):
         col_s1, col_s2 = st.columns([2, 1])
         with col_s1:
             nuevo_sector = st.text_input("Nuevo sector", label_visibility="collapsed", placeholder="Nombre del nuevo sector")
@@ -229,7 +346,7 @@ def page_sectores():
     )
     st.dataframe(df, width="stretch")
 
-    if rol == "admin" and sectores:
+    if tiene_permiso("eliminar_sectores") and sectores:
         with st.expander("Eliminar sector"):
             sector_a_borrar = st.selectbox(
                 "Seleccionar sector a eliminar",
@@ -246,7 +363,7 @@ def page_sectores():
 def page_lineas():
     st.header("Líneas de Producción")
 
-    if rol == "admin":
+    if tiene_permiso("crear_lineas"):
         sectores = obtener_sectores()
         col_l1, col_l2 = st.columns(2)
         with col_l1:
@@ -270,7 +387,7 @@ def page_lineas():
     )
     st.dataframe(df, width="stretch")
 
-    if rol == "admin" and lineas:
+    if tiene_permiso("eliminar_lineas") and lineas:
         with st.expander("Eliminar línea"):
             linea_a_borrar = st.selectbox(
                 "Seleccionar línea a eliminar",
@@ -287,7 +404,7 @@ def page_lineas():
 def page_equipos():
     st.header("Equipos / Robots")
 
-    if rol == "admin":
+    if tiene_permiso("crear_equipos"):
         sectores = obtener_sectores()
         nombre = st.text_input("Nombre del equipo")
         tipo = st.selectbox("Tipo", ["Robot", "Cobot", "Máquina", "PLC", "Otro"])
@@ -326,7 +443,7 @@ def page_equipos():
     )
     st.dataframe(df, width="stretch")
 
-    if rol == "admin" and equipos:
+    if tiene_permiso("eliminar_equipos") and equipos:
         with st.expander("Eliminar equipo"):
             equipo_a_borrar = st.selectbox(
                 "Seleccionar equipo a eliminar",
@@ -503,7 +620,7 @@ def page_historial():
     st.markdown(f"**{len(df_filtrado)} paradas encontradas**")
     st.dataframe(df_filtrado, width="stretch")
 
-    if not df_filtrado.empty and rol == "admin":
+    if not df_filtrado.empty and tiene_permiso("exportar_historial"):
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             df_filtrado.to_excel(writer, index=False, sheet_name="Paradas")
@@ -513,6 +630,67 @@ def page_historial():
             file_name=f"paradas_mantenimiento_{date.today()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
+    # --- EDITAR PARADA ---
+    puede_editar = tiene_permiso("editar_parada_cualquiera") or tiene_permiso("editar_parada_propia")
+    if puede_editar and eventos:
+        st.markdown("---")
+        st.header("Editar parada")
+
+        editables = [e for e in eventos if puede_editar_parada(e)]
+        if editables:
+            sel_e = st.selectbox(
+                "Seleccionar parada a editar",
+                editables,
+                format_func=lambda x: f"#{x.id} — {x.equipo.nombre} ({x.fecha.strftime('%d/%m/%y')})",
+                key="edit_parada_sel",
+            )
+            with st.form("form_editar_parada"):
+                col_e1, col_e2 = st.columns(2)
+                with col_e1:
+                    nueva_fecha = st.date_input("Fecha", value=sel_e.fecha, key="ef_fecha")
+                    nueva_hora = st.time_input("Hora inicio", value=None if not sel_e.hora_inicio else datetime.strptime(sel_e.hora_inicio, "%H:%M").time(), key="ef_hora")
+                with col_e2:
+                    dur_idx = 4
+                    for i, (k, v) in enumerate(DURACION_OPTS.items()):
+                        if v == sel_e.duracion_minutos:
+                            dur_idx = i
+                            break
+                    nueva_duracion = st.selectbox("Duración", list(DURACION_OPTS.keys()), index=dur_idx, key="ef_duracion")
+                nueva_falla = st.text_area("Falla", value=sel_e.falla, key="ef_falla")
+                nueva_accion = st.text_area("Acción", value=sel_e.accion, key="ef_accion")
+                repuestos = obtener_repuestos()
+                rep_opts = [None] + repuestos
+                rep_idx = 0
+                for i, r in enumerate(rep_opts):
+                    if r and sel_e.repuesto_id == r.id:
+                        rep_idx = i
+                        break
+                nuevo_rep = st.selectbox(
+                    "Repuesto",
+                    rep_opts,
+                    format_func=lambda x: "Ninguno" if x is None else f"{x.nombre} (stock: {x.stock})",
+                    index=rep_idx,
+                    key="ef_repuesto",
+                )
+                if st.form_submit_button("Guardar cambios", type="primary", use_container_width=True):
+                    if not nueva_falla.strip():
+                        st.error("La descripción de la falla es obligatoria")
+                    elif not nueva_accion.strip():
+                        st.error("La acción es obligatoria")
+                    else:
+                        hora_str = nueva_hora.strftime("%H:%M") if nueva_hora else ""
+                        editar_evento(
+                            sel_e.id,
+                            datetime.combine(nueva_fecha, datetime.min.time()),
+                            hora_str,
+                            DURACION_OPTS[nueva_duracion],
+                            nueva_falla.strip(),
+                            nueva_accion.strip(),
+                            nuevo_rep.id if nuevo_rep else None,
+                        )
+                        st.success("Parada actualizada correctamente")
+                        st.rerun()
 
 
 def page_usuarios():
@@ -551,16 +729,50 @@ def page_usuarios():
     usuarios = obtener_usuarios()
     if usuarios:
         for usr in usuarios:
-            col_a, col_b, col_c, col_d, col_e = st.columns([2, 2, 1, 1, 1])
-            col_a.write(usr.nombre_completo or usr.username)
-            col_b.write(usr.username)
-            col_c.write(usr.rol)
-            col_d.write("Activo" if usr.activo else "Inactivo")
-            if usr.id != user.id:
-                label = "Desactivar" if usr.activo else "Activar"
-                if col_e.button(label, key=f"usr_{usr.id}"):
-                    desactivar_usuario(usr.id)
-                    st.rerun()
+            with st.container():
+                cols = st.columns([2, 2, 1, 1, 1])
+                cols[0].write(usr.nombre_completo or usr.username)
+                cols[1].write(usr.username)
+                cols[2].write(usr.rol)
+                cols[3].write("Activo" if usr.activo else "Inactivo")
+                if usr.id != user.id:
+                    label = "Desactivar" if usr.activo else "Activar"
+                    if cols[4].button(label, key=f"usr_{usr.id}"):
+                        desactivar_usuario(usr.id)
+                        st.rerun()
+
+                if usr.id != user.id:
+                    with st.expander(f"Permisos — {usr.nombre_completo or usr.username}", key=f"perm_exp_{usr.id}"):
+                        base_permisos = PERMISOS_POR_ROL.get(usr.rol, {}).copy()
+                        actuales = base_permisos.copy()
+                        if usr.permisos_extra:
+                            try:
+                                actuales.update(json.loads(usr.permisos_extra))
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+
+                        nuevos_extras = {}
+                        st.markdown("**Permisos adicionales al rol**")
+                        for categoria, lista in PERMISOS_DISPONIBLES.items():
+                            with st.container():
+                                st.markdown(f"**{categoria}**", help=None)
+                                cols_p = st.columns(2)
+                                for i, perm in enumerate(lista):
+                                    etiqueta = _ETIQUETAS_PERMISOS.get(perm, perm)
+                                    valor = st.checkbox(
+                                        etiqueta, value=actuales.get(perm, False),
+                                        key=f"perm_{usr.id}_{perm}"
+                                    )
+                                    if valor != base_permisos.get(perm, False):
+                                        nuevos_extras[perm] = valor
+                                    cols_p[i % 2].write("")
+
+                                st.markdown("---", unsafe_allow_html=True)
+
+                        if st.button("Guardar permisos", key=f"save_perm_{usr.id}"):
+                            guardar_permisos_extras(usr.id, nuevos_extras or None)
+                            st.success("Permisos guardados")
+                            st.rerun()
     else:
         st.info("No hay usuarios registrados")
 
@@ -784,7 +996,7 @@ def dashboard_section():
 def page_solicitudes():
     st.header("Solicitudes de Reparación")
 
-    if rol in ("admin", "supervisor", "tecnico", "operario"):
+    if tiene_permiso("crear_solicitudes"):
         with st.expander("Nueva solicitud", expanded=True):
             sectores = obtener_sectores()
             if sectores:
@@ -851,7 +1063,7 @@ def page_solicitudes():
     ])
     st.dataframe(df, width="stretch")
 
-    if rol in ("admin", "supervisor") and solicitudes_filt:
+    if tiene_permiso("gestionar_solicitudes") and solicitudes_filt:
         st.markdown("---")
         st.subheader("Gestionar solicitud")
 
@@ -911,25 +1123,27 @@ _pg_paradas = None
 
 pages = [st.Page(page_inicio, title="Inicio", icon="🏠", default=True)]
 
-if rol in ("admin", "supervisor", "tecnico", "operario"):
+if tiene_permiso("registrar_parada"):
     _pg_paradas = st.Page(page_paradas, title="Registrar Parada", icon="➕")
     pages.append(_pg_paradas)
 
-if rol in ("admin", "supervisor", "tecnico"):
+if tiene_permiso("ver_sectores"):
     pages.append(st.Page(page_sectores, title="Sectores", icon="🏭"))
+if tiene_permiso("ver_lineas"):
     pages.append(st.Page(page_lineas, title="Líneas", icon="📦"))
+if tiene_permiso("ver_equipos"):
     pages.append(st.Page(page_equipos, title="Equipos", icon="🤖"))
 
-if rol == "admin":
+if tiene_permiso("ver_repuestos"):
     pages.append(st.Page(page_repuestos, title="Repuestos", icon="🔩"))
 
-if rol in ("admin", "supervisor", "tecnico", "operario", "produccion"):
+if tiene_permiso("ver_solicitudes"):
     pages.append(st.Page(page_solicitudes, title="Solicitudes", icon="🔧"))
 
-if rol in ("admin", "supervisor", "tecnico", "operario", "produccion"):
+if tiene_permiso("ver_historial"):
     pages.append(st.Page(page_historial, title="Historial", icon="📋"))
 
-if rol == "admin":
+if tiene_permiso("ver_usuarios"):
     pages.append(st.Page(page_usuarios, title="Usuarios", icon="👥"))
 
 nav = st.navigation(pages, position="sidebar")

@@ -49,6 +49,7 @@ class Usuario(Base):
     nombre_completo = Column(String, default="")
     rol = Column(String, default="tecnico")
     activo = Column(Boolean, default=True)
+    permisos_extra = Column(Text, nullable=True)
 
 
 class EventoMantenimiento(Base):

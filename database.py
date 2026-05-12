@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import base64
 import time
@@ -51,6 +52,7 @@ def _migrar_base():
             ("eventos", "hora_inicio", "VARCHAR DEFAULT ''"),
             ("eventos", "duracion_minutos", "INTEGER DEFAULT 0"),
             ("equipos", "linea_id", "INTEGER REFERENCES lineas(id)"),
+            ("usuarios", "permisos_extra", "TEXT"),
         ]
 
         for table, col, definition in columnas:
@@ -94,22 +96,22 @@ def _crear_indices(db, dialect):
 
 
 def _migracion_ya_aplicada(db, dialect):
-    """Retorna True si las columnas nuevas ya existen (migración previa)."""
+    """Retorna True si permisos_extra ya existe (migración completa)."""
     try:
         if dialect == "postgresql":
             result = db.execute(
                 text(
                     "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_name='eventos' AND column_name='user_id'"
+                    "WHERE table_name='usuarios' AND column_name='permisos_extra'"
                 )
             ).fetchone()
             return result is not None
         elif dialect == "sqlite":
             conn = db.connection().connection
             cursor = conn.cursor()
-            cursor.execute("PRAGMA table_info(eventos)")
+            cursor.execute("PRAGMA table_info(usuarios)")
             cols = {row[1] for row in cursor.fetchall()}
-            return "user_id" in cols
+            return "permisos_extra" in cols
     except Exception:
         pass
     return False
@@ -366,9 +368,32 @@ def desactivar_usuario(user_id):
     st.cache_data.clear()
 
 
+def guardar_permisos_extras(usuario_id, permisos_dict):
+    with get_db() as db:
+        user = db.query(Usuario).get(usuario_id)
+        if user:
+            user.permisos_extra = json.dumps(permisos_dict) if permisos_dict else None
+            db.commit()
+    st.cache_data.clear()
+
+
 # =====================================
 # CRUD EVENTOS
 # =====================================
+
+def editar_evento(evento_id, fecha, hora_inicio, duracion_minutos, falla, accion, repuesto_id):
+    with get_db() as db:
+        evento = db.query(EventoMantenimiento).get(evento_id)
+        if evento:
+            evento.fecha = fecha
+            evento.hora_inicio = hora_inicio
+            evento.duracion_minutos = duracion_minutos
+            evento.falla = falla
+            evento.accion = accion
+            evento.repuesto_id = repuesto_id
+            db.commit()
+    st.cache_data.clear()
+
 
 def crear_evento(equipo_id, falla, accion, repuesto_id, tecnico, observaciones, user_id=None, hora_inicio="", duracion_minutos=0):
     with get_db() as db:
