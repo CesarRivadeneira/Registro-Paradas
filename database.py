@@ -195,7 +195,6 @@ def crear_sector(nombre):
     st.cache_data.clear()
 
 
-@st.cache_data(ttl=60)
 def obtener_sectores():
     with get_db() as db:
         return db.query(Sector).all()
@@ -226,13 +225,11 @@ def crear_linea(nombre, sector_id):
     st.cache_data.clear()
 
 
-@st.cache_data(ttl=60)
 def obtener_lineas():
     with get_db() as db:
         return db.query(Linea).options(joinedload(Linea.sector)).all()
 
 
-@st.cache_data(ttl=60)
 def obtener_lineas_por_sector(sector_id):
     with get_db() as db:
         return db.query(Linea).filter(Linea.sector_id == sector_id).all()
@@ -259,7 +256,6 @@ def crear_equipo(nombre, tipo, linea_id):
     st.cache_data.clear()
 
 
-@st.cache_data(ttl=60)
 def obtener_equipos():
     with get_db() as db:
         return (
@@ -269,7 +265,6 @@ def obtener_equipos():
         )
 
 
-@st.cache_data(ttl=60)
 def obtener_equipos_por_linea(linea_id):
     with get_db() as db:
         return (
@@ -319,7 +314,6 @@ def crear_repuesto(nombre, codigo, stock):
             return False, str(e)
 
 
-@st.cache_data(ttl=60)
 def obtener_repuestos():
     with get_db() as db:
         return db.query(Repuesto).all()
@@ -356,7 +350,6 @@ def autenticar(username, password):
         return None
 
 
-@st.cache_data(ttl=60)
 def obtener_usuarios():
     with get_db() as db:
         return db.query(Usuario).all()
