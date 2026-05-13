@@ -290,6 +290,7 @@ if not st.session_state.user:
                     st.rerun()
                 else:
                     st.error("Usuario o contraseña incorrectos")
+        st.info("**Demo:** Usuario `upru` · Contraseña `p123123`")
     st.stop()
 
 # =====================================
