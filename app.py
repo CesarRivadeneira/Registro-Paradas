@@ -642,65 +642,112 @@ def page_paradas():
 
 
 def page_historial():
-    st.header("Historial de Paradas")
+    st.header("Historial")
 
-    eventos = obtener_eventos()
+    tab1, tab2 = st.tabs(["Paradas", "Solicitudes"])
 
-    df = pd.DataFrame(
-        [
-            {
-                "Fecha": e.fecha,
-                "Hora inicio": e.hora_inicio,
-                "Duración": fmt_duracion(e.duracion_minutos) if e.duracion_minutos else "",
-                "Equipo": e.equipo.nombre,
-                "Línea": e.equipo.linea.nombre if e.equipo and e.equipo.linea else "",
-                "Sector": e.equipo.linea.sector.nombre if e.equipo and e.equipo.linea and e.equipo.linea.sector else "",
-                "Falla": e.falla,
-                "Acción": e.accion,
-                "Repuesto": e.repuesto.nombre if e.repuesto else "",
-                "Técnico": e.tecnico,
-                "Registró": e.usuario.nombre_completo or e.usuario.username if e.usuario else "",
-                "Observaciones": e.observaciones,
-            }
-            for e in eventos
-        ]
-    )
+    with tab1:
+        st.subheader("Paradas de Mantenimiento")
+        eventos = obtener_eventos()
 
-    with st.expander("Filtros", expanded=True):
-        col_f1, col_f2, col_f3 = st.columns(3)
-        with col_f1:
-            fecha_desde = st.date_input("Desde", value=None)
-        with col_f2:
-            fecha_hasta = st.date_input("Hasta", value=None)
-        with col_f3:
-            nombres_equipos = sorted(df["Equipo"].unique()) if not df.empty else []
-            equipos_filtro = st.multiselect("Equipo", nombres_equipos)
-
-    df_filtrado = df.copy()
-    if fecha_desde:
-        df_filtrado = df_filtrado[
-            pd.to_datetime(df_filtrado["Fecha"]).dt.date >= fecha_desde
-        ]
-    if fecha_hasta:
-        df_filtrado = df_filtrado[
-            pd.to_datetime(df_filtrado["Fecha"]).dt.date <= fecha_hasta
-        ]
-    if equipos_filtro:
-        df_filtrado = df_filtrado[df_filtrado["Equipo"].isin(equipos_filtro)]
-
-    st.markdown(f"**{len(df_filtrado)} paradas encontradas**")
-    st.dataframe(df_filtrado, width="stretch")
-
-    if not df_filtrado.empty and tiene_permiso("exportar_historial"):
-        buffer = BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            df_filtrado.to_excel(writer, index=False, sheet_name="Paradas")
-        st.download_button(
-            label="Exportar a Excel",
-            data=buffer.getvalue(),
-            file_name=f"paradas_mantenimiento_{date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        df = pd.DataFrame(
+            [
+                {
+                    "Fecha": e.fecha,
+                    "Hora inicio": e.hora_inicio,
+                    "Duración": fmt_duracion(e.duracion_minutos) if e.duracion_minutos else "",
+                    "Equipo": e.equipo.nombre,
+                    "Línea": e.equipo.linea.nombre if e.equipo and e.equipo.linea else "",
+                    "Sector": e.equipo.linea.sector.nombre if e.equipo and e.equipo.linea and e.equipo.linea.sector else "",
+                    "Falla": e.falla,
+                    "Acción": e.accion,
+                    "Repuesto": e.repuesto.nombre if e.repuesto else "",
+                    "Técnico": e.tecnico,
+                    "Registró": e.usuario.nombre_completo or e.usuario.username if e.usuario else "",
+                    "Observaciones": e.observaciones,
+                }
+                for e in eventos
+            ]
         )
+
+        with st.expander("Filtros", expanded=True):
+            col_f1, col_f2, col_f3 = st.columns(3)
+            with col_f1:
+                fecha_desde = st.date_input("Desde", value=None)
+            with col_f2:
+                fecha_hasta = st.date_input("Hasta", value=None)
+            with col_f3:
+                nombres_equipos = sorted(df["Equipo"].unique()) if not df.empty else []
+                equipos_filtro = st.multiselect("Equipo", nombres_equipos)
+
+        df_filtrado = df.copy()
+        if fecha_desde:
+            df_filtrado = df_filtrado[
+                pd.to_datetime(df_filtrado["Fecha"]).dt.date >= fecha_desde
+            ]
+        if fecha_hasta:
+            df_filtrado = df_filtrado[
+                pd.to_datetime(df_filtrado["Fecha"]).dt.date <= fecha_hasta
+            ]
+        if equipos_filtro:
+            df_filtrado = df_filtrado[df_filtrado["Equipo"].isin(equipos_filtro)]
+
+        st.markdown(f"**{len(df_filtrado)} paradas encontradas**")
+        st.dataframe(df_filtrado, width="stretch")
+
+        if not df_filtrado.empty and tiene_permiso("exportar_historial"):
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                df_filtrado.to_excel(writer, index=False, sheet_name="Paradas")
+            st.download_button(
+                label="Exportar a Excel",
+                data=buffer.getvalue(),
+                file_name=f"paradas_mantenimiento_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+    with tab2:
+        st.subheader("Solicitudes de Reparación")
+        solicitudes = obtener_solicitudes()
+        if solicitudes:
+            col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+            col_c1.metric("Pendientes", sum(1 for s in solicitudes if s.estado == "pendiente"))
+            col_c2.metric("Programadas", sum(1 for s in solicitudes if s.estado == "programada"))
+            col_c3.metric("Realizadas", sum(1 for s in solicitudes if s.estado == "realizada"))
+            col_c4.metric("Rechazadas", sum(1 for s in solicitudes if s.estado == "rechazada"))
+
+            estados = ["Todas", "pendiente", "programada", "realizada", "rechazada"]
+            filtro_estado = st.selectbox("Filtrar por estado", estados, key="hist_sol_estado")
+            solicitudes_filt = [s for s in solicitudes if filtro_estado == "Todas" or s.estado == filtro_estado]
+
+            df_sol = pd.DataFrame([
+                {
+                    "ID": s.id,
+                    "Fecha": s.fecha_solicitud.strftime("%d/%m/%y"),
+                    "Línea": s.linea.nombre if s.linea else "",
+                    "Equipo": s.equipo.nombre if s.equipo else "—",
+                    "Solicitante": s.solicitante.nombre_completo or s.solicitante.username if s.solicitante else "",
+                    "Estado": s.estado,
+                    "Fecha Prog.": s.fecha_programada.strftime("%d/%m/%y") if s.fecha_programada else "—",
+                    "Ejecución": s.fecha_ejecucion.strftime("%d/%m/%y") if s.fecha_ejecucion else "—",
+                    "Observaciones": s.observaciones or "",
+                    "Motivo Rechazo": s.motivo_rechazo or "",
+                }
+                for s in solicitudes_filt
+            ])
+            st.dataframe(df_sol, width="stretch")
+
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                df_sol.to_excel(writer, index=False, sheet_name="Solicitudes")
+            st.download_button(
+                label="Exportar solicitudes a Excel",
+                data=buffer.getvalue(),
+                file_name=f"solicitudes_reparacion_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        else:
+            st.info("No hay solicitudes registradas")
 
 
 def page_usuarios():
