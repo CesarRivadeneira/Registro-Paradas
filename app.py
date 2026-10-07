@@ -1097,6 +1097,12 @@ def page_solicitudes():
     filtro_estado = st.selectbox("Filtrar por estado", estados_opts, key="sol_filtro")
 
     solicitudes_filt = [s for s in solicitudes if filtro_estado == "Todas" or s.estado == filtro_estado]
+    solicitudes_filt = sorted(
+        solicitudes_filt, key=lambda s: s.fecha_solicitud or datetime.min, reverse=True
+    )
+    if not solicitudes_filt:
+        st.info("No hay solicitudes en este estado")
+        return
 
     df = pd.DataFrame([
         {
@@ -1110,23 +1116,24 @@ def page_solicitudes():
             "Ejecutada": s.fecha_ejecucion.strftime("%d/%m/%y") if s.fecha_ejecucion else "—",
         }
         for s in solicitudes_filt
-    ])
-    st.dataframe(df, width="stretch")
+    ]).set_index("ID")
 
-    if tiene_permiso("gestionar_solicitudes") and solicitudes_filt:
-        st.markdown("---")
-        st.subheader("Gestionar solicitud")
-
-        sol_keys = {
-            s.id: f"#{s.id} — {s.linea.nombre if s.linea else ''} ({s.estado})"
-            for s in solicitudes_filt
-        }
-        sel_id = st.selectbox(
-            "Seleccionar solicitud", list(sol_keys.keys()),
-            format_func=lambda x: sol_keys[x], key="sol_gestion"
+    if tiene_permiso("gestionar_solicitudes"):
+        seleccion = st.dataframe(
+            df,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="lista_gestion_sol",
+            width="stretch",
         )
-        sol_sel = next((s for s in solicitudes_filt if s.id == sel_id), None)
-        if sol_sel:
+        if seleccion.selection.rows:
+            sel_id = df.index[seleccion.selection.rows[0]]
+            if st.session_state.get("gestion_sol_actual") != sel_id:
+                st.session_state.pop("prog_fecha", None)
+                st.session_state["gestion_sol_actual"] = sel_id
+            sol_sel = next(s for s in solicitudes_filt if s.id == sel_id)
+            st.markdown("---")
+            st.subheader(f"Gestionar solicitud #{sol_sel.id}")
             st.write(f"**Descripción:** {sol_sel.descripcion}")
 
             if sol_sel.estado == "pendiente":
@@ -1163,6 +1170,11 @@ def page_solicitudes():
             elif sol_sel.estado == "realizada":
                 if sol_sel.observaciones:
                     st.info(f"**Observaciones:** {sol_sel.observaciones}")
+        else:
+            st.markdown("---")
+            st.info("Seleccioná una solicitud de la tabla para gestionarla.")
+    else:
+        st.dataframe(df, width="stretch")
 
 
 # =====================================
@@ -1171,32 +1183,43 @@ def page_solicitudes():
 
 _pg_paradas = None
 
-pages = [st.Page(page_inicio, title="Inicio", icon="🏠", default=True)]
+nucleo = [st.Page(page_inicio, title="Inicio", icon="🏠", default=True)]
 
 if tiene_permiso("registrar_parada"):
     _pg_paradas = st.Page(page_paradas, title="Registrar Parada", icon="➕")
-    pages.append(_pg_paradas)
-
-if tiene_permiso("ver_sectores"):
-    pages.append(st.Page(page_sectores, title="Sectores", icon="🏭"))
-if tiene_permiso("ver_lineas"):
-    pages.append(st.Page(page_lineas, title="Líneas", icon="📦"))
-if tiene_permiso("ver_equipos"):
-    pages.append(st.Page(page_equipos, title="Equipos", icon="🤖"))
-
-if tiene_permiso("ver_repuestos"):
-    pages.append(st.Page(page_repuestos, title="Repuestos", icon="🔩"))
+    nucleo.append(_pg_paradas)
 
 if tiene_permiso("ver_solicitudes"):
-    pages.append(st.Page(page_solicitudes, title="Solicitudes", icon="🔧"))
+    nucleo.append(st.Page(page_solicitudes, title="Solicitudes de Reparación", icon="🔧"))
 
 if tiene_permiso("ver_historial"):
-    pages.append(st.Page(page_historial, title="Historial", icon="📋"))
+    nucleo.append(st.Page(page_historial, title="Historial", icon="📋"))
 
+estructura = []
+if tiene_permiso("ver_sectores"):
+    estructura.append(st.Page(page_sectores, title="Sectores", icon="🏭"))
+if tiene_permiso("ver_lineas"):
+    estructura.append(st.Page(page_lineas, title="Líneas", icon="📦"))
+if tiene_permiso("ver_equipos"):
+    estructura.append(st.Page(page_equipos, title="Equipos", icon="🤖"))
+
+recursos = []
+if tiene_permiso("ver_repuestos"):
+    recursos.append(st.Page(page_repuestos, title="Repuestos", icon="🔩"))
+
+admin = []
 if tiene_permiso("ver_usuarios"):
-    pages.append(st.Page(page_usuarios, title="Usuarios", icon="👥"))
+    admin.append(st.Page(page_usuarios, title="Usuarios", icon="👥"))
 
-nav = st.navigation(pages, position="sidebar")
+nav_dict = {"": nucleo}
+if estructura:
+    nav_dict["Estructura"] = estructura
+if recursos:
+    nav_dict["Recursos"] = recursos
+if admin:
+    nav_dict["Administración"] = admin
+
+nav = st.navigation(nav_dict, position="sidebar")
 nav.run()
 
 # Logout al pie del sidebar
