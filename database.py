@@ -47,6 +47,47 @@ def init_db():
             return
 
 
+_SECTORES_DEFAULT = [
+    "Cosmetica 1",
+    "Cosmetica 2",
+    "Paletizado",
+    "Despaletizado",
+    "Envasado",
+    "Depósito",
+]
+
+_LINEAS_DEFAULT = {
+    "Cosmetica 1": ["Odorono", "Línea 5"],
+    "Cosmetica 2": ["Línea 1", "Línea 2"],
+    "Paletizado": ["Paletizado 1"],
+    "Despaletizado": ["Despaletizado 1"],
+    "Envasado": ["Envasado 1", "Envasado 2"],
+}
+
+
+@st.cache_resource
+def inicializar_sistema():
+    """Inicializa la base y carga datos por defecto una sola vez por proceso.
+
+    Streamlit re-ejecuta el script en cada interacción; sin esta caché,
+    init_db() y el seed golpearían la base en cada click.
+    """
+    init_db()
+    _cargar_datos_default()
+
+
+def _cargar_datos_default():
+    if len(obtener_sectores()) > 0:
+        return
+    for s in _SECTORES_DEFAULT:
+        crear_sector(s)
+    for sec_nombre, lineas in _LINEAS_DEFAULT.items():
+        sector = next((s for s in obtener_sectores() if s.nombre == sec_nombre), None)
+        if sector:
+            for linea_nombre in lineas:
+                crear_linea(linea_nombre, sector.id)
+
+
 def _migrar_base():
     """Agrega columnas nuevas si no existen (migración progresiva)."""
     with get_db() as db:
@@ -464,6 +505,12 @@ def obtener_eventos_recientes(limite=10):
             .limit(limite)
             .all()
         )
+
+
+@st.cache_data(ttl=60)
+def contar_eventos_total():
+    with get_db() as db:
+        return db.query(func.count(EventoMantenimiento.id)).scalar() or 0
 
 
 @st.cache_data(ttl=60)

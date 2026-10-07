@@ -6,7 +6,7 @@ from io import BytesIO
 from datetime import datetime, date
 
 from database import (
-    init_db,
+    inicializar_sistema,
     crear_sector,
     obtener_sectores,
     eliminar_sector,
@@ -25,6 +25,7 @@ from database import (
     obtener_eventos_por_usuario,
     obtener_eventos_recientes,
     contar_eventos_mes,
+    contar_eventos_total,
     contar_eventos_por_equipo,
     contar_eventos_por_sector,
     repuestos_bajo_stock,
@@ -198,45 +199,15 @@ st.markdown(
 )
 
 # =====================================
-# INICIALIZAR DB
+# INICIALIZAR DB (una sola vez por proceso)
 # =====================================
 
 try:
-    init_db()
+    inicializar_sistema()
 except Exception as e:
     st.error(f"Error de conexión a la base de datos: {e}")
     st.info("Verificá que el secret DATABASE_URL esté configurado correctamente en Streamlit Cloud.")
     st.stop()
-
-# =====================================
-# CARGA INICIAL (solo si vacío)
-# =====================================
-
-sectores_default = [
-    "Cosmetica 1",
-    "Cosmetica 2",
-    "Paletizado",
-    "Despaletizado",
-    "Envasado",
-    "Depósito",
-]
-
-lineas_default = {
-    "Cosmetica 1": ["Odorono", "Línea 5"],
-    "Cosmetica 2": ["Línea 1", "Línea 2"],
-    "Paletizado": ["Paletizado 1"],
-    "Despaletizado": ["Despaletizado 1"],
-    "Envasado": ["Envasado 1", "Envasado 2"],
-}
-
-if len(obtener_sectores()) == 0:
-    for s in sectores_default:
-        crear_sector(s)
-    for sec_nombre, lineas in lineas_default.items():
-        sector = next((s for s in obtener_sectores() if s.nombre == sec_nombre), None)
-        if sector:
-            for linea_nombre in lineas:
-                crear_linea(linea_nombre, sector.id)
 
 # =====================================
 # LOGIN
@@ -320,7 +291,7 @@ def page_inicio():
             if _pg_paradas:
                 st.switch_page(_pg_paradas)
     with col_b2:
-        st.metric("Total Paradas", len(obtener_eventos()))
+        st.metric("Total Paradas", contar_eventos_total())
     with col_b3:
         st.metric("Este mes", contar_eventos_mes())
     with col_b4:
