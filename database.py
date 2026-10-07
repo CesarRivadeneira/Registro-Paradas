@@ -132,9 +132,12 @@ def _crear_indices(db, dialect):
     indices = [
         "CREATE INDEX IF NOT EXISTS ix_eventos_equipo_id ON eventos(equipo_id)",
         "CREATE INDEX IF NOT EXISTS ix_eventos_fecha ON eventos(fecha)",
+        "CREATE INDEX IF NOT EXISTS ix_eventos_user_id ON eventos(user_id)",
         "CREATE INDEX IF NOT EXISTS ix_lineas_sector_id ON lineas(sector_id)",
+        "CREATE INDEX IF NOT EXISTS ix_equipos_linea_id ON equipos(linea_id)",
         "CREATE INDEX IF NOT EXISTS ix_solicitudes_linea_id ON solicitudes_reparacion(linea_id)",
         "CREATE INDEX IF NOT EXISTS ix_solicitudes_fecha ON solicitudes_reparacion(fecha_solicitud)",
+        "CREATE INDEX IF NOT EXISTS ix_solicitudes_estado ON solicitudes_reparacion(estado)",
     ]
     for idx in indices:
         try:
@@ -223,6 +226,39 @@ def get_db():
         db.close()
 
 
+def _bump_datos():
+    """Invalida caché global y la caché de datos de referencia de la sesión."""
+    try:
+        st.cache_data.clear()
+        st.session_state["_datos_ver"] = st.session_state.get("_datos_ver", 0) + 1
+    except Exception:
+        pass
+
+
+def _datos_cache(key, loader):
+    """Memoiza data de referencia (bajo churn) por sesión, evitando queries por rerun.
+
+    No usa @st.cache_data porque los objetos ORM no son serializables en esta
+    versión de Streamlit; se guarda en session_state y se invalida con _bump_datos().
+    """
+    try:
+        ses = st.session_state
+    except Exception:
+        return loader()
+    ver = ses.get("_datos_ver", 0)
+    ses["_datos_ver"] = ver
+    cache = ses.get("_datos_cache")
+    if not isinstance(cache, dict):
+        cache = {}
+    if cache.get("_ver") != ver:
+        cache = {k: v for k, v in cache.items() if k.startswith("_") and k != "_ver"}
+        cache["_ver"] = ver
+    if key not in cache:
+        cache[key] = loader()
+    ses["_datos_cache"] = cache
+    return cache[key]
+
+
 # =====================================
 # CRUD SECTORES
 # =====================================
@@ -233,10 +269,14 @@ def crear_sector(nombre):
         if not existe:
             db.add(Sector(nombre=nombre))
             db.commit()
-    st.cache_data.clear()
+    _bump_datos()
 
 
 def obtener_sectores():
+    return _datos_cache("sectores", lambda: _obtener_sectores())
+
+
+def _obtener_sectores():
     with get_db() as db:
         return db.query(Sector).all()
 
@@ -248,7 +288,7 @@ def eliminar_sector(sector_id):
             db.query(Linea).filter(Linea.sector_id == sector_id).delete()
             db.delete(sector)
             db.commit()
-    st.cache_data.clear()
+    _bump_datos()
 
 
 # =====================================
@@ -263,15 +303,23 @@ def crear_linea(nombre, sector_id):
         if not existe:
             db.add(Linea(nombre=nombre, sector_id=sector_id))
             db.commit()
-    st.cache_data.clear()
+    _bump_datos()
 
 
 def obtener_lineas():
+    return _datos_cache("lineas", lambda: _obtener_lineas())
+
+
+def _obtener_lineas():
     with get_db() as db:
         return db.query(Linea).options(joinedload(Linea.sector)).all()
 
 
 def obtener_lineas_por_sector(sector_id):
+    return _datos_cache(f"lineas_por_sector_{sector_id}", lambda: _obtener_lineas_por_sector(sector_id))
+
+
+def _obtener_lineas_por_sector(sector_id):
     with get_db() as db:
         return db.query(Linea).filter(Linea.sector_id == sector_id).all()
 
@@ -283,7 +331,7 @@ def eliminar_linea(linea_id):
             db.query(Equipo).filter(Equipo.linea_id == linea_id).delete()
             db.delete(linea)
             db.commit()
-    st.cache_data.clear()
+    _bump_datos()
 
 
 # =====================================
@@ -294,10 +342,14 @@ def crear_equipo(nombre, tipo, linea_id):
     with get_db() as db:
         db.add(Equipo(nombre=nombre, tipo=tipo, linea_id=linea_id))
         db.commit()
-    st.cache_data.clear()
+    _bump_datos()
 
 
 def obtener_equipos():
+    return _datos_cache("equipos", lambda: _obtener_equipos())
+
+
+def _obtener_equipos():
     with get_db() as db:
         return (
             db.query(Equipo)
@@ -307,6 +359,10 @@ def obtener_equipos():
 
 
 def obtener_equipos_por_linea(linea_id):
+    return _datos_cache(f"equipos_por_linea_{linea_id}", lambda: _obtener_equipos_por_linea(linea_id))
+
+
+def _obtener_equipos_por_linea(linea_id):
     with get_db() as db:
         return (
             db.query(Equipo)
@@ -325,7 +381,7 @@ def eliminar_equipo(equipo_id):
             ).delete()
             db.delete(equipo)
             db.commit()
-    st.cache_data.clear()
+    _bump_datos()
 
 
 # =====================================
@@ -343,12 +399,12 @@ def crear_repuesto(nombre, codigo, stock):
             if existente:
                 existente.stock += stock
                 db.commit()
-                st.cache_data.clear()
+                _bump_datos()
                 return True, "Stock actualizado correctamente"
             nuevo = Repuesto(nombre=nombre, codigo=codigo, stock=stock)
             db.add(nuevo)
             db.commit()
-            st.cache_data.clear()
+            _bump_datos()
             return True, "Repuesto creado correctamente"
         except Exception as e:
             db.rollback()
@@ -356,6 +412,10 @@ def crear_repuesto(nombre, codigo, stock):
 
 
 def obtener_repuestos():
+    return _datos_cache("repuestos", lambda: _obtener_repuestos())
+
+
+def _obtener_repuestos():
     with get_db() as db:
         return db.query(Repuesto).all()
 
@@ -377,7 +437,7 @@ def crear_usuario(username, password, nombre_completo="", rol="tecnico"):
         )
         db.add(usuario)
         db.commit()
-    st.cache_data.clear()
+    _bump_datos()
     return True, "Usuario creado correctamente"
 
 
@@ -392,6 +452,10 @@ def autenticar(username, password):
 
 
 def obtener_usuarios():
+    return _datos_cache("usuarios", lambda: _obtener_usuarios())
+
+
+def _obtener_usuarios():
     with get_db() as db:
         return db.query(Usuario).all()
 
@@ -407,7 +471,7 @@ def desactivar_usuario(user_id):
         if user:
             user.activo = not user.activo
             db.commit()
-    st.cache_data.clear()
+    _bump_datos()
 
 
 def guardar_permisos_extras(usuario_id, permisos_dict):
@@ -416,7 +480,7 @@ def guardar_permisos_extras(usuario_id, permisos_dict):
         if user:
             user.permisos_extra = json.dumps(permisos_dict) if permisos_dict else None
             db.commit()
-    st.cache_data.clear()
+    _bump_datos()
 
 
 # =====================================
@@ -434,7 +498,7 @@ def editar_evento(evento_id, fecha, hora_inicio, duracion_minutos, falla, accion
             evento.accion = accion
             evento.repuesto_id = repuesto_id
             db.commit()
-    st.cache_data.clear()
+    _bump_datos()
 
 
 def crear_evento(equipo_id, falla, accion, repuesto_id, tecnico, observaciones, user_id=None, hora_inicio="", duracion_minutos=0):
@@ -456,7 +520,7 @@ def crear_evento(equipo_id, falla, accion, repuesto_id, tecnico, observaciones, 
             if repuesto and repuesto.stock > 0:
                 repuesto.stock -= 1
         db.commit()
-    st.cache_data.clear()
+    _bump_datos()
 
 
 def obtener_eventos():
@@ -752,7 +816,7 @@ def crear_solicitud(linea_id, descripcion, solicitante_id, equipo_id=None):
         )
         db.add(solicitud)
         db.commit()
-    st.cache_data.clear()
+    _bump_datos()
 
 
 def obtener_solicitudes():
@@ -779,7 +843,7 @@ def programar_solicitud(solicitud_id, fecha_programada, usuario_id):
             sol.fecha_programada = fecha_programada
             sol.programado_por_id = usuario_id
             db.commit()
-    st.cache_data.clear()
+    _bump_datos()
 
 
 def completar_solicitud(solicitud_id, usuario_id, observaciones=""):
@@ -791,7 +855,7 @@ def completar_solicitud(solicitud_id, usuario_id, observaciones=""):
             sol.ejecutado_por_id = usuario_id
             sol.observaciones = observaciones or None
             db.commit()
-    st.cache_data.clear()
+    _bump_datos()
 
 
 def rechazar_solicitud(solicitud_id, usuario_id, motivo):
@@ -803,4 +867,4 @@ def rechazar_solicitud(solicitud_id, usuario_id, motivo):
             sol.fecha_ejecucion = datetime.now()
             sol.motivo_rechazo = motivo
             db.commit()
-    st.cache_data.clear()
+    _bump_datos()

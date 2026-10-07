@@ -31,6 +31,7 @@ from database import (
     repuestos_bajo_stock,
     sumar_duracion_total,
     sumar_duracion_mes,
+    obtener_resumen_dashboard,
     calcular_mttr_global,
     calcular_mtbf_global,
     calcular_kpi_por_linea,
@@ -161,15 +162,23 @@ _ETIQUETAS_PERMISOS = {
 }
 
 
+def _permisos_resueltos():
+    user = st.session_state.user
+    key = f"_perms_{user.id}_{user.permisos_extra or ''}"
+    if key not in st.session_state:
+        permisos = PERMISOS_POR_ROL.get(user.rol, {}).copy()
+        extra = user.permisos_extra
+        if extra:
+            try:
+                permisos.update(json.loads(extra))
+            except (json.JSONDecodeError, TypeError):
+                pass
+        st.session_state[key] = permisos
+    return st.session_state[key]
+
+
 def tiene_permiso(permiso):
-    permisos = PERMISOS_POR_ROL.get(st.session_state.user.rol, {}).copy()
-    extra = st.session_state.user.permisos_extra
-    if extra:
-        try:
-            permisos.update(json.loads(extra))
-        except (json.JSONDecodeError, TypeError):
-            pass
-    return permisos.get(permiso, False)
+    return _permisos_resueltos().get(permiso, False)
 
 
 def puede_editar_parada(evento):
@@ -667,15 +676,18 @@ def page_historial():
         st.dataframe(df_filtrado, width="stretch")
 
         if not df_filtrado.empty and tiene_permiso("exportar_historial"):
-            buffer = BytesIO()
-            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                df_filtrado.to_excel(writer, index=False, sheet_name="Paradas")
-            st.download_button(
-                label="Exportar a Excel",
-                data=buffer.getvalue(),
-                file_name=f"paradas_mantenimiento_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+            if st.button("Generar Excel", key="gen_excel_paradas", use_container_width=True):
+                buffer = BytesIO()
+                with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                    df_filtrado.to_excel(writer, index=False, sheet_name="Paradas")
+                st.session_state["excel_paradas"] = buffer.getvalue()
+            if st.session_state.get("excel_paradas") is not None:
+                st.download_button(
+                    label="Descargar Excel",
+                    data=st.session_state["excel_paradas"],
+                    file_name=f"paradas_mantenimiento_{date.today()}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
 
     with tab2:
         st.subheader("Solicitudes de Reparación")
@@ -708,15 +720,18 @@ def page_historial():
             ])
             st.dataframe(df_sol, width="stretch")
 
-            buffer = BytesIO()
-            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                df_sol.to_excel(writer, index=False, sheet_name="Solicitudes")
-            st.download_button(
-                label="Exportar solicitudes a Excel",
-                data=buffer.getvalue(),
-                file_name=f"solicitudes_reparacion_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+            if st.button("Generar Excel", key="gen_excel_solicitudes", use_container_width=True):
+                buffer = BytesIO()
+                with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                    df_sol.to_excel(writer, index=False, sheet_name="Solicitudes")
+                st.session_state["excel_solicitudes"] = buffer.getvalue()
+            if st.session_state.get("excel_solicitudes") is not None:
+                st.download_button(
+                    label="Descargar Excel",
+                    data=st.session_state["excel_solicitudes"],
+                    file_name=f"solicitudes_reparacion_{date.today()}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
         else:
             st.info("No hay solicitudes registradas")
 
@@ -808,7 +823,6 @@ def page_usuarios():
 @st.fragment
 def dashboard_section():
     from datetime import timedelta
-    from database import get_db, Sector, Linea, Equipo, EventoMantenimiento
 
     # Selectores
     col_p1, col_p2, col_p3, col_p4 = st.columns([1, 1, 1, 1])
@@ -931,21 +945,7 @@ def dashboard_section():
         )
 
     # Cargar datos para gráficos y tabla
-    with get_db() as db:
-        base_rows = (
-            db.query(
-                Sector.nombre.label("sector"),
-                Linea.nombre.label("linea"),
-                Equipo.nombre.label("equipo"),
-                EventoMantenimiento.duracion_minutos,
-            )
-            .select_from(EventoMantenimiento)
-            .join(Equipo, EventoMantenimiento.equipo_id == Equipo.id)
-            .join(Linea, Equipo.linea_id == Linea.id)
-            .join(Sector, Linea.sector_id == Sector.id)
-            .all()
-        )
-    df_base = pd.DataFrame(base_rows, columns=["sector", "linea", "equipo", "duracion_minutos"])
+    df_base = obtener_resumen_dashboard()
     df_f = df_base.copy()
     if sec_filtro:
         df_f = df_f[df_f["sector"] == sec_filtro.nombre]
