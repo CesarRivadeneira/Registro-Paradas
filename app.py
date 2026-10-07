@@ -565,12 +565,18 @@ def page_paradas():
 
         editables = [e for e in eventos_propios if puede_editar_parada(e)]
         if editables:
+            def _resetear_edit_form():
+                for k in ("ef_fecha", "ef_hora", "ef_duracion", "ef_falla", "ef_accion", "ef_repuesto"):
+                    st.session_state.pop(k, None)
+
             sel_e = st.selectbox(
                 "Seleccionar parada a editar",
                 editables,
                 format_func=lambda x: f"#{x.id} — {x.equipo.nombre} ({x.fecha.strftime('%d/%m/%y')})",
                 key="edit_parada_sel",
+                on_change=_resetear_edit_form,
             )
+            st.caption(f"**Equipo:** {sel_e.equipo.nombre} · **Falla:** {sel_e.falla}")
             with st.form("form_editar_parada"):
                 col_e1, col_e2 = st.columns(2)
                 with col_e1:
