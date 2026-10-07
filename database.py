@@ -4,7 +4,7 @@ import os
 import base64
 import time
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import streamlit as st
 from sqlalchemy import create_engine, text, func
@@ -18,12 +18,16 @@ except Exception:
 
 from models import Base, Sector, Linea, Equipo, Repuesto, Usuario, EventoMantenimiento, SolicitudReparacion
 
-engine = create_engine(
-    DATABASE_URL,
-    echo=False,
-    pool_pre_ping=True,
-    connect_args={"connect_timeout": 10},
-)
+_engine_kwargs = {
+    "echo": False,
+    "pool_pre_ping": True,
+    "connect_args": {"connect_timeout": 10},
+}
+if DATABASE_URL.startswith("postgresql"):
+    # Neon: conexiones viejas contra un compute suspendido; pool acotado.
+    _engine_kwargs.update({"pool_recycle": 300, "pool_size": 5, "max_overflow": 5})
+
+engine = create_engine(DATABASE_URL, **_engine_kwargs)
 SessionLocal = sessionmaker(bind=engine)
 
 
@@ -571,6 +575,47 @@ def obtener_eventos_recientes(limite=10):
         )
 
 
+def obtener_eventos_filtrados(
+    sector_id=None,
+    linea_id=None,
+    equipo_id=None,
+    desde=None,
+    hasta=None,
+    equipo_ids=None,
+    limite=None,
+):
+    """Eventos filtrados del lado de la base, evitando transferir todo el historial."""
+    with get_db() as db:
+        q = db.query(EventoMantenimiento).options(
+            joinedload(EventoMantenimiento.equipo)
+            .joinedload(Equipo.linea)
+            .joinedload(Linea.sector),
+            joinedload(EventoMantenimiento.repuesto),
+            joinedload(EventoMantenimiento.usuario),
+        )
+
+        if sector_id:
+            q = q.filter(
+                EventoMantenimiento.equipo.has(
+                    Equipo.linea.has(Linea.sector_id == sector_id)
+                )
+            )
+        elif linea_id:
+            q = q.filter(EventoMantenimiento.equipo.has(Equipo.linea_id == linea_id))
+        if equipo_id:
+            q = q.filter(EventoMantenimiento.equipo_id == equipo_id)
+        if equipo_ids:
+            q = q.filter(EventoMantenimiento.equipo_id.in_(equipo_ids))
+        if desde:
+            q = q.filter(EventoMantenimiento.fecha >= desde)
+        if hasta:
+            q = q.filter(EventoMantenimiento.fecha < hasta + timedelta(days=1))
+        q = q.order_by(EventoMantenimiento.fecha.desc(), EventoMantenimiento.id.desc())
+        if limite:
+            q = q.limit(limite)
+        return q.all()
+
+
 @st.cache_data(ttl=60)
 def contar_eventos_total():
     with get_db() as db:
@@ -591,6 +636,7 @@ def contar_eventos_mes():
         )
 
 
+@st.cache_data(ttl=60)
 def obtener_resumen_dashboard():
     """Retorna DataFrame liviano para dashboard (evita cargar objetos ORM completos)."""
     import pandas as pd

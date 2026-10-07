@@ -22,6 +22,7 @@ from database import (
     obtener_repuestos,
     crear_evento,
     obtener_eventos,
+    obtener_eventos_filtrados,
     obtener_eventos_por_usuario,
     obtener_eventos_recientes,
     contar_eventos_mes,
@@ -630,11 +631,28 @@ def page_paradas():
 def page_historial():
     st.header("Historial")
 
-    tab1, tab2 = st.tabs(["Paradas", "Solicitudes"])
+    seccion = st.radio("Historial", ["Paradas", "Solicitudes"], horizontal=True, key="hist_seccion")
 
-    with tab1:
+    if seccion == "Paradas":
         st.subheader("Paradas de Mantenimiento")
-        eventos = obtener_eventos()
+
+        with st.expander("Filtros", expanded=True):
+            col_f1, col_f2, col_f3 = st.columns(3)
+            with col_f1:
+                fecha_desde = st.date_input("Desde", value=None, key="h_desde")
+            with col_f2:
+                fecha_hasta = st.date_input("Hasta", value=None, key="h_hasta")
+            with col_f3:
+                nombres_equipos = sorted({e.nombre for e in obtener_equipos()})
+                equipos_filtro = st.multiselect("Equipo", nombres_equipos, key="h_equipos")
+
+        desde_dt = datetime.combine(fecha_desde, datetime.min.time()) if fecha_desde else None
+        hasta_dt = datetime.combine(fecha_hasta, datetime.min.time()) if fecha_hasta else None
+        equipo_ids = None
+        if equipos_filtro:
+            equipo_ids = [e.id for e in obtener_equipos() if e.nombre in equipos_filtro]
+
+        eventos = obtener_eventos_filtrados(desde=desde_dt, hasta=hasta_dt, equipo_ids=equipo_ids)
 
         df = pd.DataFrame(
             [
@@ -656,36 +674,14 @@ def page_historial():
             ]
         )
 
-        with st.expander("Filtros", expanded=True):
-            col_f1, col_f2, col_f3 = st.columns(3)
-            with col_f1:
-                fecha_desde = st.date_input("Desde", value=None)
-            with col_f2:
-                fecha_hasta = st.date_input("Hasta", value=None)
-            with col_f3:
-                nombres_equipos = sorted(df["Equipo"].unique()) if not df.empty else []
-                equipos_filtro = st.multiselect("Equipo", nombres_equipos)
+        st.markdown(f"**{len(df)} paradas encontradas**")
+        st.dataframe(df, width="stretch")
 
-        df_filtrado = df.copy()
-        if fecha_desde:
-            df_filtrado = df_filtrado[
-                pd.to_datetime(df_filtrado["Fecha"]).dt.date >= fecha_desde
-            ]
-        if fecha_hasta:
-            df_filtrado = df_filtrado[
-                pd.to_datetime(df_filtrado["Fecha"]).dt.date <= fecha_hasta
-            ]
-        if equipos_filtro:
-            df_filtrado = df_filtrado[df_filtrado["Equipo"].isin(equipos_filtro)]
-
-        st.markdown(f"**{len(df_filtrado)} paradas encontradas**")
-        st.dataframe(df_filtrado, width="stretch")
-
-        if not df_filtrado.empty and tiene_permiso("exportar_historial"):
+        if not df.empty and tiene_permiso("exportar_historial"):
             if st.button("Generar Excel", key="gen_excel_paradas", use_container_width=True):
                 buffer = BytesIO()
                 with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                    df_filtrado.to_excel(writer, index=False, sheet_name="Paradas")
+                    df.to_excel(writer, index=False, sheet_name="Paradas")
                 st.session_state["excel_paradas"] = buffer.getvalue()
             if st.session_state.get("excel_paradas") is not None:
                 st.download_button(
@@ -694,8 +690,7 @@ def page_historial():
                     file_name=f"paradas_mantenimiento_{date.today()}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
-
-    with tab2:
+    else:
         st.subheader("Solicitudes de Reparación")
         solicitudes = obtener_solicitudes()
         if solicitudes:
@@ -997,14 +992,11 @@ def dashboard_section():
 
     st.markdown("---")
     st.subheader("Detalle de paradas")
-    todos_eventos = obtener_eventos()
-    eventos_filt = todos_eventos
-    if sec_filtro:
-        eventos_filt = [e for e in eventos_filt if e.equipo and e.equipo.linea and e.equipo.linea.sector and e.equipo.linea.sector.nombre == sec_filtro.nombre]
-    if lin_filtro:
-        eventos_filt = [e for e in eventos_filt if e.equipo and e.equipo.linea and e.equipo.linea.nombre == lin_filtro.nombre]
-    if eq_filtro:
-        eventos_filt = [e for e in eventos_filt if e.equipo and e.equipo.nombre == eq_filtro.nombre]
+    eventos_filt = obtener_eventos_filtrados(
+        sector_id=sec_filtro.id if sec_filtro else None,
+        linea_id=lin_filtro.id if lin_filtro else None,
+        equipo_id=eq_filtro.id if eq_filtro else None,
+    )
 
     if eventos_filt:
         df_detalle = pd.DataFrame(

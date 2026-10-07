@@ -1,0 +1,20 @@
+name: Neon Keep-Alive
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.DATABASE_URL != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install psycopg2-binary
+      - run: python .github/workflows/neon_ping.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
