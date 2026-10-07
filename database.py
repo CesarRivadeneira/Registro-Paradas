@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 import streamlit as st
 from sqlalchemy import create_engine, text, func
-from sqlalchemy.orm import sessionmaker, joinedload
+from sqlalchemy.orm import sessionmaker, joinedload, selectinload
 from sqlalchemy.exc import SQLAlchemyError, OperationalError
 
 try:
@@ -16,7 +16,10 @@ try:
 except Exception:
     DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///mantenimiento.db")
 
-from models import Base, Sector, Linea, Equipo, Repuesto, Usuario, EventoMantenimiento, SolicitudReparacion
+from models import (
+    Base, Sector, Linea, Equipo, Repuesto, Usuario, EventoMantenimiento,
+    SolicitudReparacion, Reparacion,
+)
 
 _engine_kwargs = {
     "echo": False,
@@ -37,6 +40,7 @@ def init_db():
         try:
             Base.metadata.create_all(bind=engine)
             _migrar_base()
+            _migrar_repuestos_m2m()
             return
         except OperationalError as e:
             if attempt < max_attempts:
@@ -48,7 +52,24 @@ def init_db():
         except SQLAlchemyError:
             # Tablas/sequences ya existen (ej. PostgreSQL reintenta crear sequences existentes)
             _migrar_base()
+            _migrar_repuestos_m2m()
             return
+
+
+def _migrar_repuestos_m2m():
+    """Copia repuesto_id histórico de eventos a la tabla M2M (idempotente)."""
+    with get_db() as db:
+        try:
+            db.execute(
+                text(
+                    "INSERT INTO evento_repuestos (evento_id, repuesto_id) "
+                    "SELECT id, repuesto_id FROM eventos WHERE repuesto_id IS NOT NULL "
+                    "ON CONFLICT DO NOTHING"
+                )
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
 
 
 _SECTORES_DEFAULT = [
@@ -392,7 +413,8 @@ def eliminar_equipo(equipo_id):
 # CRUD REPUESTOS
 # =====================================
 
-def crear_repuesto(nombre, codigo, stock):
+def crear_repuesto(nombre, codigo):
+    """Crea un repuesto de catálogo (el stock lo maneja otra área, no la app)."""
     with get_db() as db:
         try:
             existente = (
@@ -401,12 +423,8 @@ def crear_repuesto(nombre, codigo, stock):
                 .first()
             )
             if existente:
-                existente.stock += stock
-                db.commit()
-                _bump_datos()
-                return True, "Stock actualizado correctamente"
-            nuevo = Repuesto(nombre=nombre, codigo=codigo, stock=stock)
-            db.add(nuevo)
+                return False, "El código de repuesto ya existe"
+            db.add(Repuesto(nombre=nombre, codigo=codigo))
             db.commit()
             _bump_datos()
             return True, "Repuesto creado correctamente"
@@ -491,7 +509,7 @@ def guardar_permisos_extras(usuario_id, permisos_dict):
 # CRUD EVENTOS
 # =====================================
 
-def editar_evento(evento_id, fecha, hora_inicio, duracion_minutos, falla, accion, repuesto_id):
+def editar_evento(evento_id, fecha, hora_inicio, duracion_minutos, falla, accion, repuesto_ids=None):
     with get_db() as db:
         evento = db.query(EventoMantenimiento).get(evento_id)
         if evento:
@@ -500,18 +518,18 @@ def editar_evento(evento_id, fecha, hora_inicio, duracion_minutos, falla, accion
             evento.duracion_minutos = duracion_minutos
             evento.falla = falla
             evento.accion = accion
-            evento.repuesto_id = repuesto_id
+            if repuesto_ids is not None:
+                evento.repuestos = db.query(Repuesto).filter(Repuesto.id.in_(repuesto_ids)).all()
             db.commit()
     _bump_datos()
 
 
-def crear_evento(equipo_id, falla, accion, repuesto_id, tecnico, observaciones, user_id=None, hora_inicio="", duracion_minutos=0):
+def crear_evento(equipo_id, falla, accion, repuesto_ids=None, tecnico="", observaciones="", user_id=None, hora_inicio="", duracion_minutos=0):
     with get_db() as db:
         evento = EventoMantenimiento(
             equipo_id=equipo_id,
             falla=falla,
             accion=accion,
-            repuesto_id=repuesto_id,
             tecnico=tecnico,
             observaciones=observaciones,
             user_id=user_id,
@@ -519,11 +537,101 @@ def crear_evento(equipo_id, falla, accion, repuesto_id, tecnico, observaciones, 
             duracion_minutos=duracion_minutos,
         )
         db.add(evento)
-        if repuesto_id:
-            repuesto = db.query(Repuesto).get(repuesto_id)
-            if repuesto and repuesto.stock > 0:
-                repuesto.stock -= 1
+        if repuesto_ids:
+            evento.repuestos = db.query(Repuesto).filter(Repuesto.id.in_(repuesto_ids)).all()
         db.commit()
+    _bump_datos()
+
+
+# =====================================
+# CRUD REPARACIONES
+# =====================================
+
+def crear_reparacion(equipo_id, trabajo, repuesto_ids=None, user_id=None, observaciones="", solicitud_id=None):
+    with get_db() as db:
+        rep = Reparacion(
+            equipo_id=equipo_id,
+            trabajo=trabajo,
+            user_id=user_id,
+            observaciones=observaciones or None,
+            solicitud_id=solicitud_id,
+        )
+        if repuesto_ids:
+            rep.repuestos = db.query(Repuesto).filter(Repuesto.id.in_(repuesto_ids)).all()
+        db.add(rep)
+        db.flush()
+        nuevo_id = rep.id
+        db.commit()
+    _bump_datos()
+    return nuevo_id
+
+
+def obtener_reparaciones():
+    with get_db() as db:
+        return (
+            db.query(Reparacion)
+            .options(
+                joinedload(Reparacion.equipo).joinedload(Equipo.linea).joinedload(Linea.sector),
+                selectinload(Reparacion.repuestos),
+                joinedload(Reparacion.usuario),
+                joinedload(Reparacion.solicitud),
+            )
+            .order_by(Reparacion.fecha.desc(), Reparacion.id.desc())
+            .all()
+        )
+
+
+def obtener_reparaciones_dia(fecha):
+    desde = datetime.combine(fecha, datetime.min.time())
+    hasta = desde + timedelta(days=1)
+    with get_db() as db:
+        return (
+            db.query(Reparacion)
+            .options(
+                joinedload(Reparacion.equipo).joinedload(Equipo.linea).joinedload(Linea.sector),
+                selectinload(Reparacion.repuestos),
+                joinedload(Reparacion.usuario),
+                joinedload(Reparacion.solicitud),
+            )
+            .filter(Reparacion.fecha >= desde, Reparacion.fecha < hasta)
+            .order_by(Reparacion.fecha.desc(), Reparacion.id.desc())
+            .all()
+        )
+
+
+def completar_solicitud_y_registrar(solicitud_id, usuario_id, observaciones="", repuesto_ids=None):
+    """Marca la solicitud como realizada y crea el registro de reparación vinculado."""
+    with get_db() as db:
+        sol = db.query(SolicitudReparacion).get(solicitud_id)
+        if not sol or sol.estado != "programada":
+            return False
+        sol.estado = "realizada"
+        sol.fecha_ejecucion = datetime.now()
+        sol.ejecutado_por_id = usuario_id
+        sol.observaciones = observaciones or None
+        rep = Reparacion(
+            equipo_id=sol.equipo_id,
+            trabajo=sol.descripcion,
+            user_id=usuario_id,
+            observaciones=observaciones or None,
+            solicitud_id=sol.id,
+        )
+        if repuesto_ids:
+            rep.repuestos = db.query(Repuesto).filter(Repuesto.id.in_(repuesto_ids)).all()
+        db.add(rep)
+        db.commit()
+    _bump_datos()
+    return True
+
+
+def postergar_solicitud(solicitud_id):
+    """Vuelve la solicitud a pendiente; se re-agenda luego con nueva fecha."""
+    with get_db() as db:
+        sol = db.query(SolicitudReparacion).get(solicitud_id)
+        if sol and sol.estado == "programada":
+            sol.estado = "pendiente"
+            sol.fecha_programada = None
+            db.commit()
     _bump_datos()
 
 
@@ -536,6 +644,7 @@ def obtener_eventos():
                 .joinedload(Equipo.linea)
                 .joinedload(Linea.sector),
                 joinedload(EventoMantenimiento.repuesto),
+                selectinload(EventoMantenimiento.repuestos),
                 joinedload(EventoMantenimiento.usuario),
             )
             .all()
@@ -551,6 +660,7 @@ def obtener_eventos_por_usuario(user_id):
                 .joinedload(Equipo.linea)
                 .joinedload(Linea.sector),
                 joinedload(EventoMantenimiento.repuesto),
+                selectinload(EventoMantenimiento.repuestos),
                 joinedload(EventoMantenimiento.usuario),
             )
             .filter(EventoMantenimiento.user_id == user_id)
@@ -567,6 +677,7 @@ def obtener_eventos_recientes(limite=10):
                 .joinedload(Equipo.linea)
                 .joinedload(Linea.sector),
                 joinedload(EventoMantenimiento.repuesto),
+                selectinload(EventoMantenimiento.repuestos),
                 joinedload(EventoMantenimiento.usuario),
             )
             .order_by(EventoMantenimiento.fecha.desc())
@@ -591,6 +702,7 @@ def obtener_eventos_filtrados(
             .joinedload(Equipo.linea)
             .joinedload(Linea.sector),
             joinedload(EventoMantenimiento.repuesto),
+            selectinload(EventoMantenimiento.repuestos),
             joinedload(EventoMantenimiento.usuario),
         )
 

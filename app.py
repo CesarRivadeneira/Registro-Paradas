@@ -29,7 +29,6 @@ from database import (
     contar_eventos_total,
     contar_eventos_por_equipo,
     contar_eventos_por_sector,
-    repuestos_bajo_stock,
     sumar_duracion_total,
     sumar_duracion_mes,
     obtener_resumen_dashboard,
@@ -37,6 +36,11 @@ from database import (
     calcular_mtbf_global,
     calcular_kpi_por_linea,
     calcular_evolucion_mensual,
+    crear_reparacion,
+    obtener_reparaciones,
+    obtener_reparaciones_dia,
+    completar_solicitud_y_registrar,
+    postergar_solicitud,
     crear_usuario,
     autenticar,
     hay_usuarios,
@@ -45,7 +49,6 @@ from database import (
     crear_solicitud,
     obtener_solicitudes,
     programar_solicitud,
-    completar_solicitud,
     rechazar_solicitud,
     editar_evento,
     guardar_permisos_extras,
@@ -79,6 +82,7 @@ PERMISOS_POR_ROL = {
         "editar_parada_propia": True, "editar_parada_cualquiera": True,
         "ver_historial": True, "exportar_historial": True,
         "ver_solicitudes": True, "crear_solicitudes": True, "gestionar_solicitudes": True,
+        "registrar_reparaciones": True, "gestionar_reparaciones": True,
         "ver_usuarios": True, "gestionar_usuarios": True,
     },
     "supervisor": {
@@ -90,17 +94,19 @@ PERMISOS_POR_ROL = {
         "editar_parada_propia": True, "editar_parada_cualquiera": True,
         "ver_historial": True, "exportar_historial": False,
         "ver_solicitudes": True, "crear_solicitudes": True, "gestionar_solicitudes": True,
+        "registrar_reparaciones": True, "gestionar_reparaciones": True,
         "ver_usuarios": False, "gestionar_usuarios": False,
     },
     "tecnico": {
         "ver_sectores": True, "crear_sectores": False, "eliminar_sectores": False,
         "ver_lineas": True, "crear_lineas": False, "eliminar_lineas": False,
         "ver_equipos": True, "crear_equipos": False, "eliminar_equipos": False,
-        "ver_repuestos": False, "crear_repuestos": False,
+        "ver_repuestos": True, "crear_repuestos": True,
         "registrar_parada": True,
         "editar_parada_propia": True, "editar_parada_cualquiera": False,
         "ver_historial": True, "exportar_historial": False,
         "ver_solicitudes": True, "crear_solicitudes": True, "gestionar_solicitudes": False,
+        "registrar_reparaciones": True, "gestionar_reparaciones": False,
         "ver_usuarios": False, "gestionar_usuarios": False,
     },
     "operario": {
@@ -112,6 +118,7 @@ PERMISOS_POR_ROL = {
         "editar_parada_propia": True, "editar_parada_cualquiera": False,
         "ver_historial": True, "exportar_historial": False,
         "ver_solicitudes": True, "crear_solicitudes": True, "gestionar_solicitudes": False,
+        "registrar_reparaciones": False, "gestionar_reparaciones": False,
         "ver_usuarios": False, "gestionar_usuarios": False,
     },
     "produccion": {
@@ -123,6 +130,7 @@ PERMISOS_POR_ROL = {
         "editar_parada_propia": False, "editar_parada_cualquiera": False,
         "ver_historial": True, "exportar_historial": False,
         "ver_solicitudes": True, "crear_solicitudes": False, "gestionar_solicitudes": False,
+        "registrar_reparaciones": False, "gestionar_reparaciones": False,
         "ver_usuarios": False, "gestionar_usuarios": False,
     },
 }
@@ -135,6 +143,7 @@ PERMISOS_DISPONIBLES = {
     "Paradas": ["registrar_parada", "editar_parada_propia", "editar_parada_cualquiera"],
     "Historial": ["ver_historial", "exportar_historial"],
     "Solicitudes": ["ver_solicitudes", "crear_solicitudes", "gestionar_solicitudes"],
+    "Reparaciones": ["registrar_reparaciones", "gestionar_reparaciones"],
     "Usuarios": ["ver_usuarios", "gestionar_usuarios"],
 }
 
@@ -158,6 +167,8 @@ _ETIQUETAS_PERMISOS = {
     "ver_solicitudes": "Ver solicitudes",
     "crear_solicitudes": "Crear solicitudes",
     "gestionar_solicitudes": "Gestionar solicitudes (programar/completar/rechazar)",
+    "registrar_reparaciones": "Registrar reparaciones (directas)",
+    "gestionar_reparaciones": "Gestionar reparaciones del día (marcar hecha/postergar)",
     "ver_usuarios": "Ver usuarios",
     "gestionar_usuarios": "Gestionar usuarios (crear/activar/desactivar)",
 }
@@ -447,10 +458,9 @@ def page_repuestos():
 
     nombre = st.text_input("Nombre repuesto")
     codigo = st.text_input("Código")
-    stock = st.number_input("Stock", min_value=0)
 
     if st.button("Guardar repuesto"):
-        ok, mensaje = crear_repuesto(nombre, codigo, stock)
+        ok, mensaje = crear_repuesto(nombre.strip(), codigo.strip())
         if ok:
             st.success(mensaje)
         else:
@@ -460,7 +470,7 @@ def page_repuestos():
 
     df = pd.DataFrame(
         [
-            {"ID": r.id, "Nombre": r.nombre, "Código": r.codigo, "Stock": r.stock}
+            {"ID": r.id, "Nombre": r.nombre, "Código": r.codigo}
             for r in repuestos
         ]
     )
@@ -516,11 +526,11 @@ def page_paradas():
     falla = st.text_area("Descripción de la falla / motivo de la parada")
     accion = st.text_area("Acción realizada para la resolución")
 
-    repuesto_opciones = [None] + repuestos
-    repuesto = st.selectbox(
-        "Repuesto utilizado",
-        repuesto_opciones,
-        format_func=lambda x: "Ninguno" if x is None else f"{x.nombre} (stock: {x.stock})",
+    repuestos_usados = st.multiselect(
+        "Repuestos utilizados",
+        repuestos,
+        format_func=lambda x: x.nombre,
+        placeholder="Seleccionar repuestos (opcional)",
     )
 
     st.caption(f"Técnico responsable: {tecnico_nombre}")
@@ -545,7 +555,7 @@ def page_paradas():
                 equipo.id,
                 falla.strip(),
                 accion.strip(),
-                repuesto.id if repuesto else None,
+                [r.id for r in repuestos_usados],
                 tecnico_nombre,
                 "",
                 user_id=user.id,
@@ -594,7 +604,7 @@ def page_paradas():
             if seleccion.selection.rows:
                 sel_id = df_lista.index[seleccion.selection.rows[0]]
                 if st.session_state.get("edit_parada_actual") != sel_id:
-                    for k in ("ef_fecha", "ef_hora", "ef_duracion", "ef_falla", "ef_accion", "ef_repuesto"):
+                    for k in ("ef_fecha", "ef_hora", "ef_duracion", "ef_falla", "ef_accion", "ef_repuestos"):
                         st.session_state.pop(k, None)
                     st.session_state["edit_parada_actual"] = sel_id
                 sel_e = next(e for e in editables if e.id == sel_id)
@@ -614,18 +624,13 @@ def page_paradas():
                     nueva_falla = st.text_area("Falla", value=sel_e.falla, key="ef_falla")
                     nueva_accion = st.text_area("Acción", value=sel_e.accion, key="ef_accion")
                     repuestos = obtener_repuestos()
-                    rep_opts = [None] + repuestos
-                    rep_idx = 0
-                    for i, r in enumerate(rep_opts):
-                        if r and sel_e.repuesto_id == r.id:
-                            rep_idx = i
-                            break
-                    nuevo_rep = st.selectbox(
-                        "Repuesto",
-                        rep_opts,
-                        format_func=lambda x: "Ninguno" if x is None else f"{x.nombre} (stock: {x.stock})",
-                        index=rep_idx,
-                        key="ef_repuesto",
+                    rep_sel_ids = {r.id for r in sel_e.repuestos}
+                    nuevos_repuestos = st.multiselect(
+                        "Repuestos utilizados",
+                        repuestos,
+                        format_func=lambda x: x.nombre,
+                        default=[r for r in repuestos if r.id in rep_sel_ids],
+                        key="ef_repuestos",
                     )
                     if st.form_submit_button("Guardar cambios", type="primary", use_container_width=True):
                         if not nueva_falla.strip():
@@ -641,7 +646,7 @@ def page_paradas():
                                 DURACION_OPTS[nueva_duracion],
                                 nueva_falla.strip(),
                                 nueva_accion.strip(),
-                                nuevo_rep.id if nuevo_rep else None,
+                                [r.id for r in nuevos_repuestos],
                             )
                             st.success("Parada actualizada correctamente")
                             st.rerun()
@@ -654,7 +659,7 @@ def page_paradas():
 def page_historial():
     st.header("Historial")
 
-    seccion = st.radio("Historial", ["Paradas", "Solicitudes"], horizontal=True, key="hist_seccion")
+    seccion = st.radio("Historial", ["Paradas", "Solicitudes", "Reparaciones"], horizontal=True, key="hist_seccion")
 
     if seccion == "Paradas":
         st.subheader("Paradas de Mantenimiento")
@@ -688,7 +693,7 @@ def page_historial():
                     "Sector": e.equipo.linea.sector.nombre if e.equipo and e.equipo.linea and e.equipo.linea.sector else "",
                     "Falla": e.falla,
                     "Acción": e.accion,
-                    "Repuesto": e.repuesto.nombre if e.repuesto else "",
+                    "Repuestos": ", ".join(r.nombre for r in e.repuestos),
                     "Técnico": e.tecnico,
                     "Registró": e.usuario.nombre_completo or e.usuario.username if e.usuario else "",
                     "Observaciones": e.observaciones,
@@ -713,7 +718,7 @@ def page_historial():
                     file_name=f"paradas_mantenimiento_{date.today()}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
-    else:
+    elif seccion == "Solicitudes":
         st.subheader("Solicitudes de Reparación")
         solicitudes = obtener_solicitudes()
         if solicitudes:
@@ -758,6 +763,56 @@ def page_historial():
                 )
         else:
             st.info("No hay solicitudes registradas")
+    else:
+        st.subheader("Reparaciones")
+
+        with st.expander("Filtros", expanded=True):
+            col_r1, col_r2 = st.columns(2)
+            with col_r1:
+                r_desde = st.date_input("Desde", value=None, key="hrep_desde")
+            with col_r2:
+                r_hasta = st.date_input("Hasta", value=None, key="hrep_hasta")
+
+        reparaciones = obtener_reparaciones()
+        df_rep = pd.DataFrame(
+            [
+                {
+                    "ID": r.id,
+                    "Fecha": r.fecha,
+                    "Línea": r.equipo.linea.nombre
+                    if r.equipo and r.equipo.linea
+                    else (r.solicitud.linea.nombre if r.solicitud and r.solicitud.linea else ""),
+                    "Equipo": r.equipo.nombre if r.equipo else "—",
+                    "Trabajo": r.trabajo,
+                    "Origen": f"Solicitud #{r.solicitud_id}" if r.solicitud_id else "Directa",
+                    "Repuestos": ", ".join(x.nombre for x in r.repuestos),
+                    "Técnico": r.usuario.nombre_completo or r.usuario.username if r.usuario else "",
+                    "Observaciones": r.observaciones or "",
+                }
+                for r in reparaciones
+            ]
+        )
+        if r_desde:
+            df_rep = df_rep[pd.to_datetime(df_rep["Fecha"]).dt.date >= r_desde]
+        if r_hasta:
+            df_rep = df_rep[pd.to_datetime(df_rep["Fecha"]).dt.date <= r_hasta]
+
+        st.markdown(f"**{len(df_rep)} reparaciones encontradas**")
+        st.dataframe(df_rep, width="stretch")
+
+        if not df_rep.empty and tiene_permiso("exportar_historial"):
+            if st.button("Generar Excel", key="gen_excel_reparaciones", use_container_width=True):
+                buffer = BytesIO()
+                with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                    df_rep.to_excel(writer, index=False, sheet_name="Reparaciones")
+                st.session_state["excel_reparaciones"] = buffer.getvalue()
+            if st.session_state.get("excel_reparaciones") is not None:
+                st.download_button(
+                    label="Descargar Excel",
+                    data=st.session_state["excel_reparaciones"],
+                    file_name=f"reparaciones_{date.today()}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
 
 
 def page_usuarios():
@@ -1160,9 +1215,16 @@ def page_solicitudes():
             elif sol_sel.estado == "programada":
                 with st.form("completar_form"):
                     obs = st.text_area("Observaciones (opcional)")
+                    rep_c = st.multiselect(
+                        "Repuestos utilizados",
+                        obtener_repuestos(),
+                        format_func=lambda x: x.nombre,
+                    )
                     if st.form_submit_button("✅ Completar solicitud", type="primary", use_container_width=True):
-                        completar_solicitud(sol_sel.id, user.id, obs.strip())
-                        st.success("Solicitud completada")
+                        completar_solicitud_y_registrar(
+                            sol_sel.id, user.id, obs.strip(), [r.id for r in rep_c]
+                        )
+                        st.success("Solicitud completada y reparación registrada")
                         st.rerun()
 
             elif sol_sel.estado == "rechazada":
@@ -1175,6 +1237,177 @@ def page_solicitudes():
             st.info("Seleccioná una solicitud de la tabla para gestionarla.")
     else:
         st.dataframe(df, width="stretch")
+
+
+def page_reparaciones():
+    st.header("Reparaciones")
+
+    if tiene_permiso("registrar_reparaciones"):
+        st.subheader("Registrar reparación")
+
+        sectores = obtener_sectores()
+        if sectores:
+            with st.form("form_registrar_reparacion"):
+                sector_sel = st.selectbox(
+                    "Sector", sectores, format_func=lambda x: x.nombre, key="rep_sector"
+                )
+                lineas_del_sector = obtener_lineas_por_sector(sector_sel.id)
+                if lineas_del_sector:
+                    linea_sel = st.selectbox(
+                        "Línea", lineas_del_sector, format_func=lambda x: x.nombre, key="rep_linea"
+                    )
+                    equipos_de_linea = obtener_equipos_por_linea(linea_sel.id)
+                    if equipos_de_linea:
+                        equipo_sel = st.selectbox(
+                            "Equipo", equipos_de_linea, format_func=lambda x: x.nombre, key="rep_equipo"
+                        )
+                        trabajo = st.text_area("Trabajo realizado")
+                        repuestos = obtener_repuestos()
+                        rep_sel = st.multiselect(
+                            "Repuestos utilizados",
+                            repuestos,
+                            format_func=lambda x: x.nombre,
+                            placeholder="Seleccionar repuestos (opcional)",
+                        )
+                        obs = st.text_area("Observaciones (opcional)")
+                        if st.form_submit_button("Guardar reparación", type="primary", use_container_width=True):
+                            if not trabajo.strip():
+                                st.error("Debe describir el trabajo realizado")
+                            else:
+                                crear_reparacion(
+                                    equipo_sel.id,
+                                    trabajo.strip(),
+                                    [r.id for r in rep_sel],
+                                    user.id,
+                                    obs.strip(),
+                                )
+                                st.success("Reparación registrada")
+                                st.rerun()
+                    else:
+                        st.info("No hay equipos registrados en esta línea")
+                else:
+                    st.info("No hay líneas en este sector")
+        else:
+            st.info("No hay sectores registrados")
+
+    if tiene_permiso("gestionar_reparaciones"):
+        st.markdown("---")
+        st.subheader("Reparaciones del día")
+
+        fecha_dia = st.date_input("Fecha", value=date.today(), key="rep_dia")
+
+        agendadas = [
+            s for s in obtener_solicitudes()
+            if s.estado == "programada"
+            and s.fecha_programada
+            and s.fecha_programada.date() == fecha_dia
+        ]
+        st.markdown(f"**Agendadas para el {fecha_dia.strftime('%d/%m/%y')}**")
+        if agendadas:
+            for s in agendadas:
+                titulo = f"#{s.id} — {s.linea.nombre if s.linea else ''}"
+                if s.equipo:
+                    titulo += f" · {s.equipo.nombre}"
+                with st.expander(f"{titulo}"):
+                    st.write(f"**Descripción:** {s.descripcion}")
+                    col_a1, col_a2 = st.columns(2)
+                    with col_a1:
+                        with st.form(f"completar_dia_{s.id}"):
+                            obs_c = st.text_area("Observaciones (opcional)", key=f"rep_obs_{s.id}")
+                            rep_c = st.multiselect(
+                                "Repuestos utilizados",
+                                obtener_repuestos(),
+                                format_func=lambda x: x.nombre,
+                                key=f"rep_reps_{s.id}",
+                            )
+                            if st.form_submit_button("✅ Marcar como hecha", type="primary", use_container_width=True):
+                                completar_solicitud_y_registrar(
+                                    s.id, user.id, obs_c.strip(), [r.id for r in rep_c]
+                                )
+                                st.success("Solicitud completada y reparación registrada")
+                                st.rerun()
+                    with col_a2:
+                        if st.button("📅 Postergar", key=f"rep_post_{s.id}", use_container_width=True):
+                            postergar_solicitud(s.id)
+                            st.success("Solicitud postergada (vuelve a pendiente)")
+                            st.rerun()
+        else:
+            st.info("No hay solicitudes agendadas para esa fecha")
+
+        st.markdown(f"**Realizadas el {fecha_dia.strftime('%d/%m/%y')}**")
+        realizadas = obtener_reparaciones_dia(fecha_dia)
+        if realizadas:
+            df_dia = pd.DataFrame(
+                [
+                    {
+                        "ID": r.id,
+                        "Hora": r.fecha.strftime("%H:%M"),
+                        "Línea": r.equipo.linea.nombre
+                        if r.equipo and r.equipo.linea
+                        else (r.solicitud.linea.nombre if r.solicitud and r.solicitud.linea else ""),
+                        "Equipo": r.equipo.nombre if r.equipo else "—",
+                        "Trabajo": r.trabajo,
+                        "Origen": f"Solicitud #{r.solicitud_id}" if r.solicitud_id else "Directa",
+                        "Repuestos": ", ".join(x.nombre for x in r.repuestos),
+                        "Técnico": r.usuario.nombre_completo or r.usuario.username if r.usuario else "",
+                    }
+                    for r in realizadas
+                ]
+            )
+            st.dataframe(df_dia, width="stretch")
+        else:
+            st.info("No hay reparaciones registradas ese día")
+
+    st.markdown("---")
+    st.subheader("Historial de reparaciones")
+    reparaciones = obtener_reparaciones()
+    if reparaciones:
+        with st.expander("Filtros", expanded=True):
+            col_r1, col_r2 = st.columns(2)
+            with col_r1:
+                hr_desde = st.date_input("Desde", value=None, key="hr_desde")
+            with col_r2:
+                hr_hasta = st.date_input("Hasta", value=None, key="hr_hasta")
+
+        df_rep = pd.DataFrame(
+            [
+                {
+                    "ID": r.id,
+                    "Fecha": r.fecha,
+                    "Línea": r.equipo.linea.nombre
+                    if r.equipo and r.equipo.linea
+                    else (r.solicitud.linea.nombre if r.solicitud and r.solicitud.linea else ""),
+                    "Equipo": r.equipo.nombre if r.equipo else "—",
+                    "Trabajo": r.trabajo,
+                    "Origen": f"Solicitud #{r.solicitud_id}" if r.solicitud_id else "Directa",
+                    "Repuestos": ", ".join(x.nombre for x in r.repuestos),
+                    "Técnico": r.usuario.nombre_completo or r.usuario.username if r.usuario else "",
+                    "Observaciones": r.observaciones or "",
+                }
+                for r in reparaciones
+            ]
+        )
+        if hr_desde:
+            df_rep = df_rep[pd.to_datetime(df_rep["Fecha"]).dt.date >= hr_desde]
+        if hr_hasta:
+            df_rep = df_rep[pd.to_datetime(df_rep["Fecha"]).dt.date <= hr_hasta]
+        st.dataframe(df_rep, width="stretch")
+
+        if not df_rep.empty and tiene_permiso("exportar_historial"):
+            if st.button("Generar Excel", key="gen_excel_rep_hist", use_container_width=True):
+                buffer = BytesIO()
+                with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                    df_rep.to_excel(writer, index=False, sheet_name="Reparaciones")
+                st.session_state["excel_rep_hist"] = buffer.getvalue()
+            if st.session_state.get("excel_rep_hist") is not None:
+                st.download_button(
+                    label="Descargar Excel",
+                    data=st.session_state["excel_rep_hist"],
+                    file_name=f"reparaciones_historial_{date.today()}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+    else:
+        st.info("Aún no hay reparaciones registradas")
 
 
 # =====================================
@@ -1191,6 +1424,9 @@ if tiene_permiso("registrar_parada"):
 
 if tiene_permiso("ver_solicitudes"):
     nucleo.append(st.Page(page_solicitudes, title="Solicitudes de Reparación", icon="🔧"))
+
+if tiene_permiso("registrar_reparaciones") or tiene_permiso("gestionar_reparaciones"):
+    nucleo.append(st.Page(page_reparaciones, title="Reparaciones", icon="🛠️"))
 
 if tiene_permiso("ver_historial"):
     nucleo.append(st.Page(page_historial, title="Historial", icon="📋"))
