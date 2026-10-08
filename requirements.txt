@@ -6,3 +6,4 @@ psycopg[binary]
 python-dotenv
 altair
 openpyxl
+streamlit-cookies-controller

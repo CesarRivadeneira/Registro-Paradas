@@ -9,6 +9,7 @@ import pandas as pd
 import altair as alt
 from io import BytesIO
 from datetime import datetime, date
+from streamlit_cookies_controller import CookieController
 
 from config import SECRET_KEY as APP_SECRET_KEY, SECRET_KEY_POR_DEFECTO
 
@@ -242,40 +243,28 @@ def _validar_token(token):
         return None
 
 
-def _render_script_cookie(cookie_str):
-    st.components.v1.html(
-        f"<script>document.cookie='{cookie_str}';</script>",
-        width=1,
-        height=1,
-        scrolling=False,
-    )
+_OBSERVADOR_COOKIES = CookieController("rp_ctrl")
 
 
 def _setear_cookie(token):
-    # No se renderiza acá: se aplica en el próximo run (patrón robusto ante st.rerun()).
-    st.session_state["_cookie_pendiente"] = ("set", token)
+    _OBSERVADOR_COOKIES.set(
+        _COOKIE_SESION, token, max_age=_COOKIE_DIAS * 86400, same_site="lax"
+    )
 
 
 def _borrar_cookie():
-    st.session_state["_cookie_pendiente"] = ("del", None)
-
-
-def _aplicar_cookie():
-    """Aplica la cookie pendiente (set/delete) escribiendo el script una sola vez."""
-    pendiente = st.session_state.get("_cookie_pendiente")
-    if not pendiente:
-        return
-    accion, valor = pendiente
-    if accion == "set":
-        _render_script_cookie(
-            f"{_COOKIE_SESION}={valor}; path=/; max-age={_COOKIE_DIAS * 86400}; SameSite=Lax"
-        )
-    else:
-        _render_script_cookie(f"{_COOKIE_SESION}=; path=/; max-age=0")
-    st.session_state["_cookie_pendiente"] = None
+    _OBSERVADOR_COOKIES.remove(_COOKIE_SESION)
 
 
 def _leer_cookie():
+    # 1) Lectura client-side (funciona en Streamlit Cloud)
+    try:
+        valor = _OBSERVADOR_COOKIES.get(_COOKIE_SESION)
+        if valor:
+            return valor
+    except Exception:
+        pass
+    # 2) Fallback: st.context (puede no traer la cookie en la nube)
     try:
         cookies = st.context.cookies
         valor = cookies.get(_COOKIE_SESION)
@@ -283,6 +272,7 @@ def _leer_cookie():
             return valor
     except Exception:
         pass
+    # 3) Último fallback: header crudo
     try:
         cookie_header = st.context.headers.get("cookie", "") or ""
     except Exception:
@@ -336,9 +326,6 @@ except Exception as e:
     st.error(f"Error de conexión a la base de datos: {e}")
     st.info("Verificá que el secret DATABASE_URL esté configurado correctamente en Streamlit Cloud.")
     st.stop()
-
-# Aplicar cookie pendiente (set/delete) si corresponde
-_aplicar_cookie()
 
 # =====================================
 # LOGIN
