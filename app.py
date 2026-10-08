@@ -1,4 +1,5 @@
 import json
+import os
 import time
 import hmac
 import hashlib
@@ -215,7 +216,10 @@ def puede_editar_parada(evento):
 # =====================================
 
 _COOKIE_SESION = "rp_tok"
-_COOKIE_DIAS = 7
+_COOKIE_DIAS = int(os.getenv("COOKIE_DIAS", "7"))
+
+_FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "session_storage")
+_bridge = st.components.v1.declare_component("rp_session_bridge", path=_FRONTEND_DIR)
 
 
 def _firmar(valor):
@@ -246,25 +250,45 @@ def _validar_token(token):
 _OBSERVADOR_COOKIES = CookieController("rp_ctrl")
 
 
+def _bridge_request(set_val=None, del_flag=None):
+    """Invoca el componente client-side (localStorage + cookie)."""
+    return _bridge(
+        clave=_COOKIE_SESION,
+        set=set_val,
+        **{"del": bool(del_flag)},
+        maxAge=_COOKIE_DIAS * 86400 if set_val else 0,
+    )
+
+
 def _setear_cookie(token):
+    # localStorage (sobrevive en PWA Android) + cookie (escritorio).
+    _bridge_request(set_val=token)
     _OBSERVADOR_COOKIES.set(
         _COOKIE_SESION, token, max_age=_COOKIE_DIAS * 86400, same_site="lax"
     )
 
 
 def _borrar_cookie():
+    _bridge_request(del_flag=True)
     _OBSERVADOR_COOKIES.remove(_COOKIE_SESION)
 
 
 def _leer_cookie():
-    # 1) Lectura client-side (funciona en Streamlit Cloud)
+    # 1) Client-side: localStorage → cookie (funciona en Streamlit Cloud y PWA móvil)
+    try:
+        valor = _bridge_request()
+        if valor:
+            return valor
+    except Exception:
+        pass
+    # 2) CookieController (client-side, cookie)
     try:
         valor = _OBSERVADOR_COOKIES.get(_COOKIE_SESION)
         if valor:
             return valor
     except Exception:
         pass
-    # 2) Fallback: st.context (puede no traer la cookie en la nube)
+    # 3) st.context (puede no traer la cookie en la nube)
     try:
         cookies = st.context.cookies
         valor = cookies.get(_COOKIE_SESION)
@@ -272,7 +296,7 @@ def _leer_cookie():
             return valor
     except Exception:
         pass
-    # 3) Último fallback: header crudo
+    # 4) Último fallback: header crudo
     try:
         cookie_header = st.context.headers.get("cookie", "") or ""
     except Exception:
@@ -387,9 +411,6 @@ if not st.session_state.user:
                     st.rerun()
                 else:
                     st.error("Usuario o contraseña incorrectos")
-        if _validar_token(_leer_cookie() or ""):
-            st.info("Se detectó una sesión recordada en este navegador; iniciá sesión para actualizarla.")
-        st.caption(f"Diagnóstico: cookie de sesión detectada en este navegador: **{'sí' if _leer_cookie() else 'no'}**.")
         st.info("**Demo:** Usuario `upru` · Contraseña `p123123`")
     st.stop()
 

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+</head>
+<body>
+<script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@2.2.0/dist/streamlit-component-lib.umd.min.js"></script>
+<script>
+  function leerValor(clave) {
+    try {
+      var v = window.localStorage.getItem(clave);
+      if (v) return v;
+    } catch (e) {}
+    var m = document.cookie.match(new RegExp("(^|;\\s*)" + clave + "=([^;]*)"));
+    if (m) {
+      try { return decodeURIComponent(m[2]); } catch (e) { return m[2]; }
+    }
+    return null;
+  }
+
+  function onRender(event) {
+    var args = event.detail.args || {};
+    var clave = args.clave || "rp_tok";
+    if (args.set) {
+      try { window.localStorage.setItem(clave, args.set); } catch (e) {}
+      try {
+        document.cookie = clave + "=" + args.set +
+          "; path=/; max-age=" + (args.maxAge || 604800) + "; SameSite=Lax; Secure";
+      } catch (e) {}
+    }
+    if (args.del) {
+      try { window.localStorage.removeItem(clave); } catch (e) {}
+      try { document.cookie = clave + "=; path=/; max-age=0"; } catch (e) {}
+    }
+    var valor = leerValor(clave);
+    Streamlit.setComponentValue(valor || null);
+    Streamlit.setFrameHeight(5);
+  }
+
+  Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, onRender);
+  Streamlit.setComponentReady();
+</script>
+</body>
+</html>
