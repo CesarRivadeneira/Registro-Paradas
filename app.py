@@ -242,23 +242,47 @@ def _validar_token(token):
         return None
 
 
-def _setear_cookie(token):
+def _render_script_cookie(cookie_str):
     st.components.v1.html(
-        f"<script>document.cookie='{_COOKIE_SESION}={token}; path=/; max-age={_COOKIE_DIAS * 86400}; SameSite=Lax'</script>",
-        width=0,
-        height=0,
+        f"<script>document.cookie='{cookie_str}';</script>",
+        width=1,
+        height=1,
+        scrolling=False,
     )
+
+
+def _setear_cookie(token):
+    # No se renderiza acá: se aplica en el próximo run (patrón robusto ante st.rerun()).
+    st.session_state["_cookie_pendiente"] = ("set", token)
 
 
 def _borrar_cookie():
-    st.components.v1.html(
-        f"<script>document.cookie='{_COOKIE_SESION}=; path=/; max-age=0'</script>",
-        width=0,
-        height=0,
-    )
+    st.session_state["_cookie_pendiente"] = ("del", None)
+
+
+def _aplicar_cookie():
+    """Aplica la cookie pendiente (set/delete) escribiendo el script una sola vez."""
+    pendiente = st.session_state.get("_cookie_pendiente")
+    if not pendiente:
+        return
+    accion, valor = pendiente
+    if accion == "set":
+        _render_script_cookie(
+            f"{_COOKIE_SESION}={valor}; path=/; max-age={_COOKIE_DIAS * 86400}; SameSite=Lax"
+        )
+    else:
+        _render_script_cookie(f"{_COOKIE_SESION}=; path=/; max-age=0")
+    st.session_state["_cookie_pendiente"] = None
 
 
 def _leer_cookie():
+    try:
+        cookies = st.context.cookies
+        valor = cookies.get(_COOKIE_SESION)
+        if valor:
+            return valor
+    except Exception:
+        pass
     try:
         cookie_header = st.context.headers.get("cookie", "") or ""
     except Exception:
@@ -312,6 +336,9 @@ except Exception as e:
     st.error(f"Error de conexión a la base de datos: {e}")
     st.info("Verificá que el secret DATABASE_URL esté configurado correctamente en Streamlit Cloud.")
     st.stop()
+
+# Aplicar cookie pendiente (set/delete) si corresponde
+_aplicar_cookie()
 
 # =====================================
 # LOGIN
@@ -375,6 +402,7 @@ if not st.session_state.user:
                     st.error("Usuario o contraseña incorrectos")
         if _validar_token(_leer_cookie() or ""):
             st.info("Se detectó una sesión recordada en este navegador; iniciá sesión para actualizarla.")
+        st.caption(f"Diagnóstico: cookie de sesión detectada en este navegador: **{'sí' if _leer_cookie() else 'no'}**.")
         st.info("**Demo:** Usuario `upru` · Contraseña `p123123`")
     st.stop()
 
