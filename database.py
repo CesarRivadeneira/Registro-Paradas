@@ -482,6 +482,11 @@ def _obtener_usuarios():
         return db.query(Usuario).all()
 
 
+def obtener_usuario_por_id(user_id):
+    with get_db() as db:
+        return db.query(Usuario).get(user_id)
+
+
 def hay_usuarios():
     with get_db() as db:
         return db.query(Usuario).count() > 0

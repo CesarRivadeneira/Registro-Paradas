@@ -1,9 +1,16 @@
 import json
+import time
+import hmac
+import hashlib
+import base64
+import urllib.parse
 import streamlit as st
 import pandas as pd
 import altair as alt
 from io import BytesIO
 from datetime import datetime, date
+
+from config import SECRET_KEY as APP_SECRET_KEY, SECRET_KEY_POR_DEFECTO
 
 from database import (
     inicializar_sistema,
@@ -45,6 +52,7 @@ from database import (
     autenticar,
     hay_usuarios,
     obtener_usuarios,
+    obtener_usuario_por_id,
     desactivar_usuario,
     crear_solicitud,
     obtener_solicitudes,
@@ -202,6 +210,81 @@ def puede_editar_parada(evento):
 
 
 # =====================================
+# SESIÓN PERSISTENTE (cookie "Recordarme")
+# =====================================
+
+_COOKIE_SESION = "rp_tok"
+_COOKIE_DIAS = 7
+
+
+def _firmar(valor):
+    return hmac.new(APP_SECRET_KEY.encode(), valor.encode(), hashlib.sha256).hexdigest()
+
+
+def _crear_token(user_id):
+    expiracion = int(time.time()) + _COOKIE_DIAS * 86400
+    payload = f"{user_id}|{expiracion}"
+    firma = _firmar(payload)
+    return base64.urlsafe_b64encode(f"{payload}.{firma}".encode()).decode()
+
+
+def _validar_token(token):
+    try:
+        raw = base64.urlsafe_b64decode(token.encode() + b"==").decode()
+        payload, firma = raw.rsplit(".", 1)
+        if not hmac.compare_digest(firma, _firmar(payload)):
+            return None
+        user_id_str, exp_str = payload.split("|")
+        if int(exp_str) < int(time.time()):
+            return None
+        return int(user_id_str)
+    except Exception:
+        return None
+
+
+def _setear_cookie(token):
+    st.components.v1.html(
+        f"<script>document.cookie='{_COOKIE_SESION}={token}; path=/; max-age={_COOKIE_DIAS * 86400}; SameSite=Lax'</script>",
+        width=0,
+        height=0,
+    )
+
+
+def _borrar_cookie():
+    st.components.v1.html(
+        f"<script>document.cookie='{_COOKIE_SESION}=; path=/; max-age=0'</script>",
+        width=0,
+        height=0,
+    )
+
+
+def _leer_cookie():
+    try:
+        cookie_header = st.context.headers.get("cookie", "") or ""
+    except Exception:
+        return None
+    for parte in cookie_header.split(";"):
+        if "=" in parte:
+            clave, valor = parte.strip().split("=", 1)
+            if clave.strip() == _COOKIE_SESION:
+                return urllib.parse.unquote(valor.strip())
+    return None
+
+
+def _restaurar_sesion():
+    """Restaura la sesión desde la cookie si es válida y el usuario sigue activo."""
+    token = _leer_cookie()
+    if not token:
+        return
+    user_id = _validar_token(token)
+    if not user_id:
+        return
+    usuario = obtener_usuario_por_id(user_id)
+    if usuario and usuario.activo:
+        st.session_state.user = usuario
+
+
+# =====================================
 # CONFIG STREAMLIT
 # =====================================
 
@@ -236,6 +319,9 @@ except Exception as e:
 
 if "user" not in st.session_state:
     st.session_state.user = None
+
+if not st.session_state.user:
+    _restaurar_sesion()
 
 if not st.session_state.user:
     st.title("Sistema de Gestión de Mantenimiento")
@@ -275,13 +361,20 @@ if not st.session_state.user:
         with st.form("login"):
             u = st.text_input("Usuario")
             p = st.text_input("Contraseña", type="password")
+            recordar = st.checkbox("🔓 Recordarme en este equipo", value=True)
             if st.form_submit_button("Ingresar"):
                 user = autenticar(u, p)
                 if user:
+                    if recordar:
+                        _setear_cookie(_crear_token(user.id))
+                    else:
+                        _borrar_cookie()
                     st.session_state.user = user
                     st.rerun()
                 else:
                     st.error("Usuario o contraseña incorrectos")
+        if _validar_token(_leer_cookie() or ""):
+            st.info("Se detectó una sesión recordada en este navegador; iniciá sesión para actualizarla.")
         st.info("**Demo:** Usuario `upru` · Contraseña `p123123`")
     st.stop()
 
@@ -1460,5 +1553,6 @@ nav.run()
 
 # Logout al pie del sidebar
 if st.sidebar.button("Cerrar sesión", use_container_width=True):
+    _borrar_cookie()
     st.session_state.user = None
     st.rerun()
