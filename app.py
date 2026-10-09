@@ -64,15 +64,6 @@ from database import (
     guardar_permisos_extras,
 )
 
-DURACION_OPTS = {
-    "5 min": 5, "10 min": 10, "15 min": 15, "20 min": 20,
-    "30 min": 30, "45 min": 45,
-    "1 hora": 60, "1h 30m": 90,
-    "2 horas": 120, "2h 30m": 150,
-    "3 horas": 180, "3h 30m": 210,
-    "4 horas": 240, "Más de 4h": 999,
-}
-
 
 def fmt_duracion(minutos):
     if minutos >= 60:
@@ -439,6 +430,11 @@ def page_inicio():
     with col_b1:
         if st.button("➕ Registrar Parada", use_container_width=True, type="primary"):
             if _pg_paradas:
+                st.session_state["modo_parada"] = "📋 Carga completa"
+                st.switch_page(_pg_paradas)
+        if st.button("⚡ Parada rápida", use_container_width=True):
+            if _pg_paradas:
+                st.session_state["modo_parada"] = "⚡ Parada rápida"
                 st.switch_page(_pg_paradas)
     with col_b2:
         st.metric("Total Paradas", contar_eventos_total())
@@ -607,63 +603,79 @@ def page_repuestos():
     st.dataframe(df, width="stretch")
 
 
-def page_paradas():
-    st.header("Registrar Parada de Línea / Equipo")
-
-    sectores = obtener_sectores()
-    repuestos = obtener_repuestos()
-    tecnico_nombre = user.nombre_completo or user.username
-
-    if len(sectores) == 0:
-        st.warning("Primero debe haber sectores registrados")
-        st.stop()
-
+def _seleccionar_equipo(sectores, prefix):
     sector_sel = st.selectbox(
-        "Sector", sectores, format_func=lambda x: x.nombre, key="ev_sector"
+        "Sector", sectores, format_func=lambda x: x.nombre, key=f"{prefix}_sector"
     )
     lineas_del_sector = obtener_lineas_por_sector(sector_sel.id)
-
     if not lineas_del_sector:
         st.warning("No hay líneas en este sector")
         st.stop()
-
     linea_sel = st.selectbox(
-        "Línea", lineas_del_sector, format_func=lambda x: x.nombre, key="ev_linea"
+        "Línea", lineas_del_sector, format_func=lambda x: x.nombre, key=f"{prefix}_linea"
     )
     equipos_de_linea = obtener_equipos_por_linea(linea_sel.id)
-
     if not equipos_de_linea:
         st.warning("No hay equipos registrados en esta línea")
         st.stop()
-
-    equipo = st.selectbox(
-        "Equipo", equipos_de_linea, format_func=lambda x: x.nombre, key="ev_equipo"
+    return st.selectbox(
+        "Equipo", equipos_de_linea, format_func=lambda x: x.nombre, key=f"{prefix}_equipo"
     )
 
+
+def _form_parada_rapida(sectores, tecnico_nombre):
+    st.info("Carga rápida: se registra la parada de hoy a la hora actual.")
+    equipo = _seleccionar_equipo(sectores, "evr")
+    duracion_min = st.number_input(
+        "Tiempo de parada (minutos)", min_value=1, value=None, step=1
+    )
+    detalle = st.text_area("Detalle")
+    if st.button("⚡ Registrar parada", type="primary", use_container_width=True):
+        errores = []
+        if not detalle.strip():
+            errores.append("Debe escribir el detalle de la parada")
+        if not duracion_min:
+            errores.append("Debe indicar el tiempo de parada (minutos)")
+        if errores:
+            for e in errores:
+                st.error(e)
+        else:
+            hora_ahora = datetime.now().strftime("%H:%M")
+            crear_evento(
+                equipo.id,
+                detalle.strip(),
+                "",
+                None,
+                tecnico_nombre,
+                "",
+                user_id=user.id,
+                hora_inicio=hora_ahora,
+                duracion_minutos=int(duracion_min),
+            )
+            st.success("Parada registrada correctamente")
+            st.rerun()
+
+
+def _form_parada_completa(sectores, tecnico_nombre):
+    repuestos = obtener_repuestos()
+    equipo = _seleccionar_equipo(sectores, "ev")
     col_t1, col_t2 = st.columns(2)
     with col_t1:
         fecha_parada = st.date_input("Fecha de la parada", value=date.today())
         hora_inicio = st.time_input("Hora de inicio de la parada", value=None, step=900)
     with col_t2:
-        duracion_label = st.selectbox(
-            "Duración de la parada",
-            list(DURACION_OPTS.keys()),
-            index=4,
+        duracion_min = st.number_input(
+            "Tiempo de parada (minutos)", min_value=1, value=None, step=1
         )
-        duracion_val = DURACION_OPTS[duracion_label]
-
     falla = st.text_area("Descripción de la falla / motivo de la parada")
     accion = st.text_area("Acción realizada para la resolución")
-
     repuestos_usados = st.multiselect(
         "Repuestos utilizados",
         repuestos,
         format_func=lambda x: x.nombre,
         placeholder="Seleccionar repuestos (opcional)",
     )
-
     st.caption(f"Técnico responsable: {tecnico_nombre}")
-
     if st.button("Guardar parada"):
         errores = []
         if not falla.strip():
@@ -672,9 +684,8 @@ def page_paradas():
             errores.append("Debe indicar la acción realizada para la resolución")
         if not hora_inicio:
             errores.append("Debe indicar la hora de inicio de la parada")
-        if duracion_val == 0:
-            errores.append("Debe seleccionar una duración válida")
-
+        if not duracion_min:
+            errores.append("Debe indicar el tiempo de parada (minutos)")
         if errores:
             for e in errores:
                 st.error(e)
@@ -689,100 +700,126 @@ def page_paradas():
                 "",
                 user_id=user.id,
                 hora_inicio=hora_str,
-                duracion_minutos=duracion_val,
+                duracion_minutos=int(duracion_min),
             )
             st.success("Parada registrada correctamente")
 
-    # --- EDITAR PARADA (propias) ---
+
+def _seccion_editar_parada():
     puede_editar = tiene_permiso("editar_parada_cualquiera") or tiene_permiso("editar_parada_propia")
-    if puede_editar:
-        st.markdown("---")
-        st.header("Editar parada")
-        if tiene_permiso("editar_parada_cualquiera"):
-            eventos_propios = obtener_eventos()
-        else:
-            eventos_propios = obtener_eventos_por_usuario(user.id)
+    if not puede_editar:
+        return
+    st.markdown("---")
+    st.header("Editar parada")
+    if tiene_permiso("editar_parada_cualquiera"):
+        eventos_propios = obtener_eventos()
+    else:
+        eventos_propios = obtener_eventos_por_usuario(user.id)
 
-        editables = [e for e in eventos_propios if puede_editar_parada(e)]
-        if editables:
-            df_lista = pd.DataFrame(
-                [
-                    {
-                        "ID": e.id,
-                        "Fecha": e.fecha,
-                        "Hora": e.hora_inicio,
-                        "Equipo": e.equipo.nombre,
-                        "Línea": e.equipo.linea.nombre if e.equipo and e.equipo.linea else "",
-                        "Sector": e.equipo.linea.sector.nombre if e.equipo and e.equipo.linea and e.equipo.linea.sector else "",
-                        "Duración": fmt_duracion(e.duracion_minutos) if e.duracion_minutos else "",
-                        "Falla": e.falla,
-                    }
-                    for e in editables
-                ]
-            ).set_index("ID")
-            df_lista = df_lista.sort_values("Fecha", ascending=False)
+    editables = [e for e in eventos_propios if puede_editar_parada(e)]
+    if not editables:
+        st.info("No hay paradas disponibles para editar")
+        return
 
-            seleccion = st.dataframe(
-                df_lista,
-                on_select="rerun",
-                selection_mode="single-row",
-                key="lista_edit_paradas",
-                width="stretch",
+    df_lista = pd.DataFrame(
+        [
+            {
+                "ID": e.id,
+                "Fecha": e.fecha,
+                "Hora": e.hora_inicio,
+                "Equipo": e.equipo.nombre,
+                "Línea": e.equipo.linea.nombre if e.equipo and e.equipo.linea else "",
+                "Sector": e.equipo.linea.sector.nombre if e.equipo and e.equipo.linea and e.equipo.linea.sector else "",
+                "Duración": fmt_duracion(e.duracion_minutos) if e.duracion_minutos else "",
+                "Falla": e.falla,
+            }
+            for e in editables
+        ]
+    ).set_index("ID")
+    df_lista = df_lista.sort_values("Fecha", ascending=False)
+
+    seleccion = st.dataframe(
+        df_lista,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="lista_edit_paradas",
+        width="stretch",
+    )
+
+    if not seleccion.selection.rows:
+        st.info("Seleccioná una parada de la tabla para editarla.")
+        return
+
+    sel_id = df_lista.index[seleccion.selection.rows[0]]
+    if st.session_state.get("edit_parada_actual") != sel_id:
+        for k in ("ef_fecha", "ef_hora", "ef_duracion", "ef_falla", "ef_accion", "ef_repuestos"):
+            st.session_state.pop(k, None)
+        st.session_state["edit_parada_actual"] = sel_id
+    sel_e = next(e for e in editables if e.id == sel_id)
+    st.caption(f"**Equipo:** {sel_e.equipo.nombre} · **Falla:** {sel_e.falla}")
+    with st.form("form_editar_parada"):
+        col_e1, col_e2 = st.columns(2)
+        with col_e1:
+            nueva_fecha = st.date_input("Fecha", value=sel_e.fecha, key="ef_fecha")
+            nueva_hora = st.time_input("Hora inicio", value=None if not sel_e.hora_inicio else datetime.strptime(sel_e.hora_inicio, "%H:%M").time(), key="ef_hora")
+        with col_e2:
+            nueva_duracion = st.number_input(
+                "Duración (minutos)",
+                min_value=1,
+                value=sel_e.duracion_minutos or 1,
+                step=1,
+                key="ef_duracion",
             )
-
-            if seleccion.selection.rows:
-                sel_id = df_lista.index[seleccion.selection.rows[0]]
-                if st.session_state.get("edit_parada_actual") != sel_id:
-                    for k in ("ef_fecha", "ef_hora", "ef_duracion", "ef_falla", "ef_accion", "ef_repuestos"):
-                        st.session_state.pop(k, None)
-                    st.session_state["edit_parada_actual"] = sel_id
-                sel_e = next(e for e in editables if e.id == sel_id)
-                st.caption(f"**Equipo:** {sel_e.equipo.nombre} · **Falla:** {sel_e.falla}")
-                with st.form("form_editar_parada"):
-                    col_e1, col_e2 = st.columns(2)
-                    with col_e1:
-                        nueva_fecha = st.date_input("Fecha", value=sel_e.fecha, key="ef_fecha")
-                        nueva_hora = st.time_input("Hora inicio", value=None if not sel_e.hora_inicio else datetime.strptime(sel_e.hora_inicio, "%H:%M").time(), key="ef_hora")
-                    with col_e2:
-                        dur_idx = 4
-                        for i, (k, v) in enumerate(DURACION_OPTS.items()):
-                            if v == sel_e.duracion_minutos:
-                                dur_idx = i
-                                break
-                        nueva_duracion = st.selectbox("Duración", list(DURACION_OPTS.keys()), index=dur_idx, key="ef_duracion")
-                    nueva_falla = st.text_area("Falla", value=sel_e.falla, key="ef_falla")
-                    nueva_accion = st.text_area("Acción", value=sel_e.accion, key="ef_accion")
-                    repuestos = obtener_repuestos()
-                    rep_sel_ids = {r.id for r in sel_e.repuestos}
-                    nuevos_repuestos = st.multiselect(
-                        "Repuestos utilizados",
-                        repuestos,
-                        format_func=lambda x: x.nombre,
-                        default=[r for r in repuestos if r.id in rep_sel_ids],
-                        key="ef_repuestos",
-                    )
-                    if st.form_submit_button("Guardar cambios", type="primary", use_container_width=True):
-                        if not nueva_falla.strip():
-                            st.error("La descripción de la falla es obligatoria")
-                        elif not nueva_accion.strip():
-                            st.error("La acción es obligatoria")
-                        else:
-                            hora_str = nueva_hora.strftime("%H:%M") if nueva_hora else ""
-                            editar_evento(
-                                sel_e.id,
-                                datetime.combine(nueva_fecha, datetime.min.time()),
-                                hora_str,
-                                DURACION_OPTS[nueva_duracion],
-                                nueva_falla.strip(),
-                                nueva_accion.strip(),
-                                [r.id for r in nuevos_repuestos],
-                            )
-                            st.success("Parada actualizada correctamente")
-                            st.rerun()
+        nueva_falla = st.text_area("Falla", value=sel_e.falla, key="ef_falla")
+        nueva_accion = st.text_area("Acción", value=sel_e.accion, key="ef_accion")
+        repuestos = obtener_repuestos()
+        rep_sel_ids = {r.id for r in sel_e.repuestos}
+        nuevos_repuestos = st.multiselect(
+            "Repuestos utilizados",
+            repuestos,
+            format_func=lambda x: x.nombre,
+            default=[r for r in repuestos if r.id in rep_sel_ids],
+            key="ef_repuestos",
+        )
+        if st.form_submit_button("Guardar cambios", type="primary", use_container_width=True):
+            if not nueva_falla.strip():
+                st.error("La descripción de la falla es obligatoria")
+            elif not nueva_accion.strip():
+                st.error("La acción es obligatoria")
             else:
-                st.info("Seleccioná una parada de la tabla para editarla.")
-        else:
-            st.info("No hay paradas disponibles para editar")
+                hora_str = nueva_hora.strftime("%H:%M") if nueva_hora else ""
+                editar_evento(
+                    sel_e.id,
+                    datetime.combine(nueva_fecha, datetime.min.time()),
+                    hora_str,
+                    int(nueva_duracion),
+                    nueva_falla.strip(),
+                    nueva_accion.strip(),
+                    [r.id for r in nuevos_repuestos],
+                )
+                st.success("Parada actualizada correctamente")
+                st.rerun()
+
+
+def page_paradas():
+    st.header("Registrar Parada de Línea / Equipo")
+
+    sectores = obtener_sectores()
+    tecnico_nombre = user.nombre_completo or user.username
+
+    if len(sectores) == 0:
+        st.warning("Primero debe haber sectores registrados")
+        st.stop()
+
+    modo = st.segmented_control(
+        "Modo", ["⚡ Parada rápida", "📋 Carga completa"], key="modo_parada"
+    )
+
+    if modo == "⚡ Parada rápida":
+        _form_parada_rapida(sectores, tecnico_nombre)
+    else:
+        _form_parada_completa(sectores, tecnico_nombre)
+        _seccion_editar_parada()
 
 
 def page_historial():
